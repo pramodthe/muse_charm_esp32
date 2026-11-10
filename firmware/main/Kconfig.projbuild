@@ -109,6 +109,29 @@ menu "Muse charm"
             default 120
     endmenu
 
+    menu "Claude Code companion"
+        config MUSE_COMPANION_ENABLE
+            bool "Show what Claude Code is doing on your computer"
+            default y
+            help
+                Run companion/muse_companion.py on the computer and add the
+                Claude Code hooks with companion/install_hooks.py. Muse finds
+                the server on the local network by itself.
+
+        config MUSE_COMPANION_URL
+            string "Server address (empty: find it automatically)"
+            depends on MUSE_COMPANION_ENABLE
+            default ""
+            help
+                Only needed on networks that block broadcasts, for example
+                ws://192.168.1.20:8765/device
+
+        config MUSE_COMPANION_SOUNDS
+            bool "Chirp when Claude finishes or needs you"
+            depends on MUSE_COMPANION_ENABLE
+            default y
+    endmenu
+
     config MUSE_DEBUG_LOG
         bool "Log microphone and motion readings"
         default n

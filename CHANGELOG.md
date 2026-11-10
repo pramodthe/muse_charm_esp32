@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.0 (unreleased)
+
+- Claude Code companion: Muse shows what Claude Code is doing on your computer (thinking, running a tool, waiting for your permission, done), with a caption under Muse. `companion/muse_companion.py` receives Claude Code's hooks and `companion/install_hooks.py` adds them. Muse finds the server with a UDP beacon.
+
 ## 0.3.0 (2026-11-11)
 
 - Voice chat through the Deepgram Voice Agent API: hold the screen to talk, Muse listens, thinks and answers out loud with its mouth following its voice. Holding again interrupts.

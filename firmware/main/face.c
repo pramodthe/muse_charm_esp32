@@ -11,7 +11,9 @@
 
 #include <math.h>
 #include <stdint.h>
+#include <string.h>
 
+#include "bsp/esp-bsp.h"
 #include "clips.h"
 #include "esp_random.h"
 #include "muse.h"
@@ -39,6 +41,9 @@ static part_t s_eye[2], s_highlight[2], s_happy[2], s_squint[2], s_dizzy[2];
 static part_t s_smile, s_open_mouth, s_tongue, s_round_mouth;
 static lv_point_precise_t s_squint_pts[2][3];
 static lv_obj_t *s_setup_hint;
+static lv_obj_t *s_caption;
+static char s_caption_text[64];  // what the caption shows (behaviour task)
+static bool s_caption_on;        // caption has text (LVGL lock)
 
 static float s_gx, s_gy;      // smoothed gaze, -1..1
 static int s_blink_tick = -1;  // -1 while the eyes are open
@@ -292,7 +297,33 @@ static void face_tick(lv_timer_t *t)
             lv_obj_add_flag(s_setup_hint, LV_OBJ_FLAG_HIDDEN);
         }
     }
+    // The caption shares its place with the setup hint.
+    const bool caption = s_caption_on && !g_muse.setup_active;
+    if (caption == lv_obj_has_flag(s_caption, LV_OBJ_FLAG_HIDDEN)) {
+        if (caption) {
+            lv_obj_remove_flag(s_caption, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_caption, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
     face_apply();
+}
+
+void face_set_caption(const char *text)
+{
+    if (!text) {
+        text = "";
+    }
+    if (strncmp(text, s_caption_text, sizeof(s_caption_text) - 1) == 0 && s_caption) {
+        return;
+    }
+    if (!s_caption || !bsp_display_lock(500)) {
+        return;  // try again next time
+    }
+    strlcpy(s_caption_text, text, sizeof(s_caption_text));
+    lv_label_set_text(s_caption, s_caption_text);
+    s_caption_on = s_caption_text[0] != '\0';
+    bsp_display_unlock();
 }
 
 void face_create(lv_obj_t *parent)
@@ -322,6 +353,18 @@ void face_create(lv_obj_t *parent)
     lv_obj_align(s_setup_hint, LV_ALIGN_BOTTOM_MID, 0, -14);
     lv_obj_remove_flag(s_setup_hint, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(s_setup_hint, LV_OBJ_FLAG_HIDDEN);
+
+    // What Claude Code is doing (companion), in the dark band under the body.
+    s_caption = lv_label_create(parent);
+    lv_label_set_text(s_caption, "");
+    lv_obj_set_width(s_caption, 300);
+    lv_label_set_long_mode(s_caption, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_font(s_caption, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_align(s_caption, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(s_caption, lv_color_hex(0xF4EEE8), 0);
+    lv_obj_align(s_caption, LV_ALIGN_BOTTOM_MID, 0, -16);
+    lv_obj_remove_flag(s_caption, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(s_caption, LV_OBJ_FLAG_HIDDEN);
 
     s_next_blink_ms = muse_now_ms() + 2500;
     s_next_glance_ms = muse_now_ms() + 1500;

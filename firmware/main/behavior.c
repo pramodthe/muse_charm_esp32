@@ -11,6 +11,13 @@
 //   tilt            leans against the tilt to stay upright
 //   shake           dizzy (interrupts anything)
 //   voice           without voice chat: looks up, mouth follows your voice
+//
+// Claude Code companion (companion.c), with a caption under Muse:
+//   thinking        glances up and aside
+//   working         reads the caption, left to right
+//   needs you       waves for attention (up to three times)
+//   hello / bye     waves;  done: cheers;  a tool failed: a puzzled look;
+//   the turn failed: a head shake;  tidying memory: squeezes
 
 #include "behavior.h"
 
@@ -19,7 +26,9 @@
 #include "agent.h"
 #include "audio.h"
 #include "clips.h"
+#include "companion.h"
 #include "esp_log.h"
+#include "face.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
@@ -41,8 +50,17 @@ static const char *TAG = "behavior";
 #define LISTEN_REPLY_MIN_MS 1500
 #define TALK_HOLD_MAX_MS 30000
 #define CHAT_MAX_MS 120000
+#define NUDGE_EVERY_MS 45000
+#define NUDGE_TIMES 3
+
+#ifdef CONFIG_MUSE_COMPANION_SOUNDS
+#define COMPANION_SOUNDS 1
+#else
+#define COMPANION_SOUNDS 0
+#endif
 
 static QueueHandle_t s_events;
+static int64_t s_caption_until_ms;  // an event's caption stays up until then
 static const muse_clip_t *s_idle, *s_wave, *s_giggle, *s_cheer, *s_lean, *s_dizzy, *s_listen, *s_squeeze;
 
 static void tick(TickType_t *wake, int fps)
@@ -176,17 +194,24 @@ static void react_listen(TickType_t *wake)
     }
 }
 
-// Something went wrong (no WiFi, no key, Deepgram error): a puzzled head shake.
-static void react_error(TickType_t *wake)
+static void head_shake(bool sound, TickType_t *wake)
 {
-    g_muse.agent_error = false;
-    audio_play(MUSE_SOUND_WHOOSH);
+    if (sound) {
+        audio_play(MUSE_SOUND_WHOOSH);
+    }
     g_muse.expr_override = MUSE_EXPR_SURPRISED;
     look(MUSE_GAZE_TARGET, 0, 0);
     const int mid = s_lean->count / 2;
     play(s_lean, mid, mid - 2, 15, wake);
     play(s_lean, mid - 2, mid + 2, 15, wake);
     play(s_lean, mid + 2, mid, 15, wake);
+}
+
+// Something went wrong (no WiFi, no key, Deepgram error): a puzzled head shake.
+static void react_error(TickType_t *wake)
+{
+    g_muse.agent_error = false;
+    head_shake(true, wake);
 }
 
 static void play_action(int action, TickType_t *wake)
@@ -267,6 +292,95 @@ static void react_talk(TickType_t *wake)
     }
 }
 
+// ---------------------------------------------------------------- Claude Code companion
+static void chirp(muse_sound_t sound)
+{
+    if (COMPANION_SOUNDS) {
+        audio_play(sound);
+    }
+}
+
+static void react_claude(const companion_event_t *e, TickType_t *wake)
+{
+    int linger_ms = 3000;
+    face_set_caption(e->caption);
+    switch (e->kind) {
+    case COMPANION_LINKED:
+        chirp(MUSE_SOUND_MMHM);
+        g_muse.blink_request = true;
+        play_all(s_giggle, wake);
+        linger_ms = 4000;
+        break;
+    case COMPANION_HELLO:
+    case COMPANION_BYE:
+        chirp(MUSE_SOUND_HELLO);
+        play_all(s_wave, wake);
+        linger_ms = e->kind == COMPANION_HELLO ? 4000 : 3000;
+        break;
+    case COMPANION_DONE:
+        chirp(MUSE_SOUND_CHEER);
+        look(MUSE_GAZE_TARGET, 0, 0);
+        play_all(s_cheer, wake);
+        linger_ms = 6000;
+        break;
+    case COMPANION_OOPS:
+        head_shake(false, wake);  // quietly: commands fail all the time
+        break;
+    case COMPANION_ERROR:
+        head_shake(COMPANION_SOUNDS, wake);
+        linger_ms = 6000;
+        break;
+    case COMPANION_COMPACT:
+        chirp(MUSE_SOUND_SQUEEZE);
+        if (play_all(s_squeeze, wake)) {
+            play(s_squeeze, s_squeeze->count - 1, 0, 0, wake);
+        }
+        break;
+    }
+    s_caption_until_ms = muse_now_ms() + linger_ms;
+}
+
+// Claude is waiting for your permission: wave to get your attention.
+static void react_nudge(TickType_t *wake)
+{
+    char caption[COMPANION_CAPTION_LEN];
+    companion_mood_caption(caption, sizeof(caption));
+    face_set_caption(caption);
+    chirp(MUSE_SOUND_WHOOSH);
+    g_muse.expr_override = MUSE_EXPR_SURPRISED;
+    look(MUSE_GAZE_TARGET, 0, 0);
+    play_all(s_wave, wake);
+}
+
+// Where Muse looks while Claude works, and the caption under Muse.
+static void follow_claude(void)
+{
+    const int64_t now = muse_now_ms();
+    const int mood = g_muse.claude_mood;
+    switch (mood) {
+    case MUSE_MOOD_THINKING:
+        look(MUSE_GAZE_TARGET, (now / 2600) % 2 ? 0.6f : -0.7f, -0.8f);  // up and aside
+        break;
+    case MUSE_MOOD_WORKING:
+        look(MUSE_GAZE_TARGET, ((float)((now / 900) % 4) - 1.5f) * 0.35f, 0.9f);  // reading the caption
+        break;
+    case MUSE_MOOD_NEEDS_YOU:
+        look(MUSE_GAZE_TARGET, 0, 0);
+        break;
+    default:
+        look(MUSE_GAZE_AUTO, 0, 0);
+        break;
+    }
+    if (now < s_caption_until_ms) {
+        return;  // an event's caption is still up
+    }
+    char caption[COMPANION_CAPTION_LEN] = "";
+    if (mood >= MUSE_MOOD_THINKING) {
+        companion_mood_caption(caption, sizeof(caption));
+    }
+    face_set_caption(caption);
+}
+
 static void react_setup(TickType_t *wake)
 {
     (void)wake;
@@ -317,6 +431,8 @@ static void behavior_task(void *arg)
     int lean = lean_mid;
     int idle = 0;
     bool leaning = false;
+    int last_mood = MUSE_MOOD_OFF, nudges = 0;
+    int64_t next_nudge_ms = 0;
     for (;;) {
         if (g_muse.setup_request) {
             g_muse.setup_request = false;
@@ -339,6 +455,30 @@ static void behavior_task(void *arg)
             idle = 0;
             continue;
         }
+        companion_event_t claude;
+        if (companion_next_event(&claude)) {
+            react_claude(&claude, &wake);
+            settle();
+            idle = 0;
+            continue;
+        }
+        const int mood = g_muse.claude_mood;
+        if (mood == MUSE_MOOD_NEEDS_YOU) {
+            if (last_mood != MUSE_MOOD_NEEDS_YOU) {
+                nudges = 0;
+                next_nudge_ms = 0;
+            }
+            last_mood = mood;
+            if (nudges < NUDGE_TIMES && muse_now_ms() >= next_nudge_ms) {
+                react_nudge(&wake);
+                nudges++;
+                next_nudge_ms = muse_now_ms() + NUDGE_EVERY_MS;
+                settle();
+                idle = 0;
+                continue;
+            }
+        }
+        last_mood = mood;
         g_muse.agent_error = false;  // errors outside a conversation need no reaction
         if (g_muse.voice_active && !g_muse.touch_down) {
             react_listen(&wake);
@@ -366,6 +506,7 @@ static void behavior_task(void *arg)
             continue;
         }
 
+        follow_claude();
         clips_show(s_idle->first + idle);
         idle = (idle + 1) % s_idle->count;
         tick(&wake, s_idle->fps);

@@ -45,6 +45,15 @@ typedef enum {
     MUSE_AGENT_SPEAKING,
 } muse_agent_state_t;
 
+// What Claude Code is up to on the computer (companion.c).
+typedef enum {
+    MUSE_MOOD_OFF = 0,      // not linked to the companion server
+    MUSE_MOOD_IDLE,
+    MUSE_MOOD_THINKING,
+    MUSE_MOOD_WORKING,      // running a tool
+    MUSE_MOOD_NEEDS_YOU,    // waiting for your permission
+} muse_mood_t;
+
 // Animations the AI can ask for while it talks.
 typedef enum {
     MUSE_ACTION_NONE = -1,
@@ -81,6 +90,7 @@ typedef struct {
     volatile bool agent_error;     // set by agent, cleared by behaviour
     volatile bool setup_active;    // setup portal open (wifi)
     volatile bool setup_request;   // open on-screen setup (wifi -> behaviour)
+    volatile int claude_mood;      // muse_mood_t (companion)
 } muse_state_t;
 
 extern muse_state_t g_muse;

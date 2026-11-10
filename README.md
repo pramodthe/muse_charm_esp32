@@ -4,7 +4,9 @@ An interactive 3D mascot for the [Waveshare ESP32-S3-Touch-AMOLED-1.8](https://g
 Hold the screen and talk to it: Muse listens, thinks and answers out loud through the
 [Deepgram Voice Agent API](https://developers.deepgram.com/docs/voice-agent), with its mouth moving
 in time with its voice. It also waves when you tap it, giggles when you tap its belly, follows your
-finger with its eyes, leans against the tilt of the board and gets dizzy when shaken.
+finger with its eyes, leans against the tilt of the board and gets dizzy when shaken. As a
+[Claude Code companion](companion/README.md) it sits by your keyboard and shows what Claude Code
+is doing: thinking, editing a file, waiting for your OK, or done.
 
 > **A fun, non-commercial learning project.** I built this to learn 3D modelling, animation and
 > embedded graphics by recreating something I liked: Meta's Muse Charm mascot, on a small dev board.
@@ -62,6 +64,22 @@ The microphone streams to Deepgram only while you hold the screen. The connectio
 between turns and closes after two quiet minutes. The key is stored on the board in NVS and is
 never shown on the setup page.
 
+## Claude Code companion
+
+Muse can show what Claude Code is doing on your computer: it glances up while Claude thinks, reads
+"Editing face.c" while Claude works, waves for attention when Claude needs your permission and
+cheers when the reply is done. A small Python server on your computer (standard library only)
+receives Claude Code's hooks and passes a mood and a caption to Muse over your WiFi; Muse finds
+it by itself.
+
+```sh
+python3 companion/muse_companion.py     # leave running
+python3 companion/install_hooks.py      # once: adds the hooks to ~/.claude/settings.json
+```
+
+See [companion/README.md](companion/README.md) for what Muse does for each event, privacy and
+troubleshooting.
+
 ## Hardware
 
 | | |
@@ -105,6 +123,8 @@ factory firmware in its repository if you want it back.
 | LLM provider / model | `open_ai` / `gpt-4o-mini` | Any Deepgram think provider |
 | Default personality | a short, friendly prompt | The setup page can replace it |
 | Close the connection after | 120 s | |
+| Claude Code companion / chirps | on / on | |
+| Companion server address | empty | Found automatically; set it on networks that block broadcasts |
 | Log microphone and motion readings | off | Prints levels every few seconds, for tuning |
 
 ## How it works
@@ -153,7 +173,12 @@ firmware/            ESP-IDF project
     wifi.c/.h        saved networks and reconnects
     portal.c/.h      the Muse-setup page
     settings.c/.h    Deepgram key, voice and personality in NVS
+    setup_ui.c/.h    on-screen WiFi and key setup
+    companion.c/.h   Claude Code companion client
     Kconfig.projbuild  menuconfig options
+companion/
+  muse_companion.py  server for the Claude Code companion
+  install_hooks.py   adds or removes the Claude Code hooks
 assets/              exported frames and anchors (input to the build)
 blender/
   muse.blend         character, rig, studio lights, device camera

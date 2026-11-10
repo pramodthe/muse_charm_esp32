@@ -13,6 +13,7 @@
 //   audio.c     ES8311 microphone and speaker
 //   sounds.c    the chirps
 //   agent.c     voice chat with the Deepgram Voice Agent API
+//   companion.c shows what Claude Code is doing on your computer
 //   wifi.c      saved networks and reconnects; portal.c the setup page
 //   settings.c  Deepgram key, voice and personality in NVS
 
@@ -21,6 +22,7 @@
 #include "behavior.h"
 #include "bsp/esp-bsp.h"
 #include "clips.h"
+#include "companion.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -97,9 +99,14 @@ void app_main(void)
         bsp_display_unlock();
     }
 
-#ifdef CONFIG_MUSE_AGENT_ENABLE
+#if defined(CONFIG_MUSE_AGENT_ENABLE) || defined(CONFIG_MUSE_COMPANION_ENABLE)
     wifi_start();
+#endif
+#ifdef CONFIG_MUSE_AGENT_ENABLE
     agent_init();
+#endif
+#ifdef CONFIG_MUSE_COMPANION_ENABLE
+    companion_start();
 #endif
     audio_start();
     motion_start();

@@ -13,6 +13,7 @@ idf_component_register(
         "portal.c"
         "settings.c"
         "setup_ui.c"
+        "companion.c"
     INCLUDE_DIRS "."
 )
 
