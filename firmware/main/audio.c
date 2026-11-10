@@ -9,15 +9,18 @@
 #include "audio.h"
 
 #include <math.h>
+#include <string.h>
 
 #include "bsp/esp-bsp.h"
 #include "driver/i2s_std.h"
 #include "esp_codec_dev.h"
 #include "esp_codec_dev_defaults.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "agent.h"
 #include "muse.h"
 
 static const char *TAG = "audio";
@@ -29,22 +32,22 @@ static const char *TAG = "audio";
 #define VOICE_MIN_CHUNKS 5     // 100 ms of sound, so taps and clicks don't count
 #define VOICE_HANGOVER_MS 700
 #define LEARN_CHUNKS 25        // learn the room noise for 0.5 s after start-up
+#define PREROLL_CHUNKS 20      // 400 ms of audio from before the talk gesture was recognised
+
+#define SPEAKER_VOLUME CONFIG_MUSE_SPEAKER_VOLUME
+#define MIC_GAIN_DB ((float)CONFIG_MUSE_MIC_GAIN_DB)
 
 #ifdef CONFIG_MUSE_SOUND_ENABLE
 #define SOUND_ENABLED 1
-#define SPEAKER_VOLUME CONFIG_MUSE_SPEAKER_VOLUME
 #else
 #define SOUND_ENABLED 0
-#define SPEAKER_VOLUME 0
 #endif
 
 #ifdef CONFIG_MUSE_VOICE_ENABLE
 #define VOICE_ENABLED 1
-#define MIC_GAIN_DB ((float)CONFIG_MUSE_MIC_GAIN_DB)
 #define VOICE_RATIO (CONFIG_MUSE_VOICE_RATIO_X10 / 10.0f)
 #else
 #define VOICE_ENABLED 0
-#define MIC_GAIN_DB 0.0f
 #define VOICE_RATIO 1000.0f
 #endif
 
@@ -152,7 +155,7 @@ static bool codec_open(void)
         return false;
     }
     esp_codec_dev_set_in_gain(s_codec, MIC_GAIN_DB);
-    esp_codec_dev_set_out_mute(s_codec, !SOUND_ENABLED);
+    esp_codec_dev_set_out_mute(s_codec, false);
     esp_codec_dev_set_out_vol(s_codec, SPEAKER_VOLUME);
     return true;
 }
@@ -173,10 +176,24 @@ static float chunk_rms(const int16_t *s, int n)
     return sqrtf(acc / n);
 }
 
+// Loudness of Muse's own reply, 0..1, for the mouth.
+static float speech_level(const int16_t *pcm, int n)
+{
+    const float rms = chunk_rms(pcm, n);
+    if (rms < 1.0f) {
+        return 0.0f;
+    }
+    const float dbfs = 20.0f * log10f(rms / 32768.0f);
+    return muse_clampf((dbfs + 42.0f) / 26.0f, 0.0f, 1.0f);
+}
+
 static void audio_task(void *arg)
 {
     (void)arg;
     static int16_t mic[CHUNK], spk[CHUNK];
+    int16_t (*preroll)[CHUNK] = heap_caps_calloc(PREROLL_CHUNKS, sizeof(*preroll), MALLOC_CAP_SPIRAM);
+    int preroll_next = 0;
+    bool was_listening = false;
     float noise = 0, env = 0;
     int voiced_run = 0, chunks = 0;
     int64_t last_voice = 0, mute_until = 0;
@@ -190,6 +207,35 @@ static void audio_task(void *arg)
         }
         const int64_t now = muse_now_ms();
 
+        // Voice chat: while the screen is held, stream the microphone,
+        // starting with the moments before the hold was recognised.
+        const bool listening = agent_listening();
+        if (listening) {
+            if (!was_listening && preroll) {
+                for (int i = 0; i < PREROLL_CHUNKS; i++) {
+                    agent_push_mic(preroll[(preroll_next + i) % PREROLL_CHUNKS], CHUNK);
+                }
+            }
+            agent_push_mic(mic, CHUNK);
+        } else if (preroll) {
+            memcpy(preroll[preroll_next], mic, sizeof(mic));
+            preroll_next = (preroll_next + 1) % PREROLL_CHUNKS;
+        }
+        was_listening = listening;
+
+        // Speaker: Muse's reply first, chirps otherwise.
+        const int got = agent_pull_speech(spk, CHUNK);
+        if (got > 0) {
+            if (got < CHUNK) {
+                memset(spk + got, 0, (CHUNK - got) * sizeof(int16_t));
+            }
+            esp_codec_dev_write(s_codec, spk, sizeof(spk));
+            mute_until = now + SELF_MUTE_MS;
+            const float level = speech_level(spk, CHUNK);
+            env = level > env ? env + (level - env) * 0.7f : env * 0.6f + level * 0.4f;
+            g_muse.mouth_level = env;
+            continue;
+        }
         int id;
         if (!s_seq && xQueueReceive(s_queue, &id, 0) == pdTRUE) {
             s_seq = muse_sounds[id];
@@ -201,7 +247,11 @@ static void audio_task(void *arg)
             mute_until = now + SELF_MUTE_MS;
         }
 
-        if (!VOICE_ENABLED) {
+        // Without voice chat, Muse just reacts to voices around it.
+        if (!VOICE_ENABLED || g_muse.agent_state != MUSE_AGENT_OFF) {
+            env *= 0.6f;
+            g_muse.mouth_level = env;
+            g_muse.voice_active = false;
             continue;
         }
         const float rms = chunk_rms(mic, CHUNK);
@@ -247,9 +297,6 @@ static void audio_task(void *arg)
 
 bool audio_start(void)
 {
-    if (!SOUND_ENABLED && !VOICE_ENABLED) {
-        return false;
-    }
     if (!codec_open()) {
         ESP_LOGW(TAG, "ES8311 codec not available, sound and voice are off");
         return false;

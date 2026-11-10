@@ -1,8 +1,10 @@
 # Muse charm for the ESP32-S3-Touch-AMOLED-1.8
 
 An interactive 3D mascot for the [Waveshare ESP32-S3-Touch-AMOLED-1.8](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.8).
-Muse waves when you tap it, giggles when you tap its belly, follows your finger with its eyes,
-leans against the tilt of the board, gets dizzy when shaken and listens when you talk.
+Hold the screen and talk to it: Muse listens, thinks and answers out loud through the
+[Deepgram Voice Agent API](https://developers.deepgram.com/docs/voice-agent), with its mouth moving
+in time with its voice. It also waves when you tap it, giggles when you tap its belly, follows your
+finger with its eyes, leans against the tilt of the board and gets dizzy when shaken.
 
 > **A fun, non-commercial learning project.** I built this to learn 3D modelling, animation and
 > embedded graphics by recreating something I liked: Meta's Muse Charm mascot, on a small dev board.
@@ -22,17 +24,43 @@ leans against the tilt of the board, gets dizzy when shaken and listens when you
 
 | Input | Muse |
 | --- | --- |
+| Hold the screen and talk | Tilts its head and listens, thinks, then answers out loud. Hold again to interrupt |
 | Drag a finger | Eyes follow your finger |
 | Tap | Waves and chirps "hi!" |
 | Tap the belly | Giggles |
-| Press and hold | Squeezes up with `> <` eyes, cheers when you let go |
+| Press the BOOT button | Squeezes up with `> <` eyes, cheers when you let go |
+| Hold BOOT for 3 s | Opens setup |
 | Swipe left or right | Gets brushed aside and glances that way |
 | Tilt the board | Stays upright by leaning against the tilt, eyes look downhill |
 | Shake | Gets dizzy |
-| Talk to it | Looks up, mouth moves with your voice, answers "mm-hm" |
 | Nothing | Breathes, blinks and glances around |
 
-All sounds are synthesized on the board; there are no audio files.
+While it answers, the AI can make Muse wave, giggle, cheer or go dizzy. Without a Deepgram key,
+holding the screen squeezes Muse instead, and Muse just looks up and moves its mouth when it hears
+a voice. The chirps are synthesized on the board.
+
+## Voice chat
+
+Muse talks to Deepgram's Voice Agent API directly over one secure websocket. Deepgram turns your
+speech into text, gets a reply from an LLM (OpenAI `gpt-4o-mini` by default) and speaks it with an
+Aura voice, so there is no server of your own to run.
+
+1. Get an API key from the [Deepgram console](https://console.deepgram.com). Usage is billed to
+   your Deepgram account.
+2. Setup opens on Muse's screen on first start, when none of the saved WiFi networks is in range,
+   or after holding **BOOT** for 3 seconds. Pick your WiFi, type its password on the watch-style
+   keyboard, then type the 40-character Deepgram key on the hex keypad.
+3. To change the voice (for example `aura-2-thalia-en`) or Muse's personality, choose
+   **Set up from a phone instead** at the bottom of the WiFi list. Muse opens a WiFi network called
+   **Muse-setup**; join it from your phone and the setup page opens (or browse to `192.168.4.1`).
+4. Hold the screen, talk, and let go.
+
+Voice chat is new and not yet tested end to end with a real key; if Muse shakes its head when you
+hold the screen, the serial log says why.
+
+The microphone streams to Deepgram only while you hold the screen. The connection stays open
+between turns and closes after two quiet minutes. The key is stored on the board in NVS and is
+never shown on the setup page.
 
 ## Hardware
 
@@ -71,6 +99,12 @@ factory firmware in its repository if you want it back.
 | Invert the lean direction | off | Turn on if Muse leans the wrong way |
 | Tilt needed to start leaning | 7° | |
 | Shake threshold | 8.0 m/s² | |
+| Voice chat | on | |
+| Default voice | `aura-2-thalia-en` | The setup page can change it |
+| Speech-to-text model | `nova-3` | |
+| LLM provider / model | `open_ai` / `gpt-4o-mini` | Any Deepgram think provider |
+| Default personality | a short, friendly prompt | The setup page can replace it |
+| Close the connection after | 120 s | |
 | Log microphone and motion readings | off | Prints levels every few seconds, for tuning |
 
 ## How it works
@@ -91,6 +125,7 @@ factory firmware in its repository if you want it back.
    face.c      draws the eyes and mouth live at each frame's anchors (30 fps)
    behavior.c  picks the clip: idle, wave, giggle, cheer, lean, dizzy, listen, squeeze
    touch.c / motion.c / audio.c   gestures, tilt and shake, voice and chirps
+   agent.c     voice chat: microphone up and reply audio down over one Deepgram websocket
 ```
 
 The QSPI display can refresh a full frame about 10 times a second, so the body runs at 10 fps.
@@ -114,6 +149,10 @@ firmware/            ESP-IDF project
     motion.c/.h      QMI8658 tilt and shake
     audio.c/.h       ES8311 microphone and speaker
     sounds.c/.h      the chirps
+    agent.c/.h       voice chat with the Deepgram Voice Agent API
+    wifi.c/.h        saved networks and reconnects
+    portal.c/.h      the Muse-setup page
+    settings.c/.h    Deepgram key, voice and personality in NVS
     Kconfig.projbuild  menuconfig options
 assets/              exported frames and anchors (input to the build)
 blender/
@@ -153,6 +192,10 @@ the scene, because the anchors are taken from them.
 
 ## Troubleshooting
 
+- **Muse shakes its head when you hold the screen:** voice chat couldn't start. The log says why:
+  no WiFi, no key, or an error from Deepgram (for example an invalid key or voice name).
+- **Muse answers before you finish:** Deepgram ends the turn at a long pause. Keep talking, or
+  hold again to add more.
 - **Muse leans the wrong way when tilted:** turn on *Invert the lean direction* in menuconfig.
 - **Muse doesn't react to your voice, or reacts to noise:** turn on *Log microphone and motion
   readings* and compare the `mic rms` level while talking with the `room noise` level, then adjust
@@ -167,6 +210,8 @@ the scene, because the anchors are taken from them.
 [LVGL](https://github.com/lvgl/lvgl),
 [esp_new_jpeg](https://components.espressif.com/components/espressif/esp_new_jpeg),
 [esp_codec_dev](https://components.espressif.com/components/espressif/esp_codec_dev),
+[Deepgram](https://deepgram.com) for speech and voice, the WiFi and setup page from
+[esp32-agui](https://github.com/pramodthe/esp32-agui),
 Waveshare's [board package](https://components.espressif.com/components/waveshare/esp32_s3_touch_amoled_1_8)
 and [QMI8658 driver](https://components.espressif.com/components/waveshare/qmi8658), and
 [Blender](https://www.blender.org) for the character.

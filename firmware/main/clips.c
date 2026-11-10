@@ -123,7 +123,9 @@ void clips_show(int frame)
     if (!decode(frame, s_buf[back])) {
         return;
     }
-    if (bsp_display_lock(0)) {
+    if (!bsp_display_lock(2000)) {
+        ESP_LOGW(TAG, "display busy for 2 s, frame %d skipped", frame);
+    } else {
         lv_canvas_set_buffer(s_canvas, s_buf[back], s_hdr->width, s_hdr->height, LV_COLOR_FORMAT_RGB565);
         lv_obj_invalidate(s_canvas);
         g_muse.frame = frame;

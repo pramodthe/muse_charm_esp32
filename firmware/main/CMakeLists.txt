@@ -8,6 +8,11 @@ idf_component_register(
         "motion.c"
         "audio.c"
         "sounds.c"
+        "agent.c"
+        "wifi.c"
+        "portal.c"
+        "settings.c"
+        "setup_ui.c"
     INCLUDE_DIRS "."
 )
 

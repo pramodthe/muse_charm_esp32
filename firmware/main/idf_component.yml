@@ -16,3 +16,6 @@ dependencies:
   # QMI8658 motion sensor (tilt and shake)
   waveshare/qmi8658:
     version: "^2.0.0"
+
+  # Secure websocket for the Deepgram Voice Agent API
+  espressif/esp_websocket_client: "^1.7.0"

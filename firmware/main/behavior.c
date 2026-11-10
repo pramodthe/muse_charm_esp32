@@ -4,22 +4,27 @@
 //   idle            breathing loop, blinks and glances
 //   tap             wave + "hi!"
 //   tap the belly   giggle
-//   hold            squeeze while held, then cheer
+//   hold            voice chat: listens while held, thinks, then answers
+//                   (squeeze instead when no Deepgram key is set up)
+//   BOOT button     squeeze while held, then cheer; hold 3 s for the setup page
 //   swipe           brushed aside, glances that way
 //   tilt            leans against the tilt to stay upright
 //   shake           dizzy (interrupts anything)
-//   voice           looks up, mouth follows your voice, "mm-hm" afterwards
+//   voice           without voice chat: looks up, mouth follows your voice
 
 #include "behavior.h"
 
 #include <math.h>
 
+#include "agent.h"
 #include "audio.h"
 #include "clips.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "setup_ui.h"
+#include "wifi.h"
 
 static const char *TAG = "behavior";
 
@@ -34,6 +39,8 @@ static const char *TAG = "behavior";
 #define HOLD_SQUEEZE_MAX_MS 8000
 #define LISTEN_MAX_MS 15000
 #define LISTEN_REPLY_MIN_MS 1500
+#define TALK_HOLD_MAX_MS 30000
+#define CHAT_MAX_MS 120000
 
 static QueueHandle_t s_events;
 static const muse_clip_t *s_idle, *s_wave, *s_giggle, *s_cheer, *s_lean, *s_dizzy, *s_listen, *s_squeeze;
@@ -89,9 +96,14 @@ static void hold_while(bool (*cond)(void), int max_ms, TickType_t *wake)
     *wake = xTaskGetTickCount();
 }
 
-static bool finger_down(void)
+static bool finger_or_button_down(void)
 {
-    return g_muse.touch_down;
+    return g_muse.touch_down || g_muse.button_down;
+}
+
+static bool talking_to_muse(void)
+{
+    return g_muse.touch_down && !g_muse.agent_error;
 }
 
 static bool voice_active(void)
@@ -116,7 +128,7 @@ static void react_squeeze(TickType_t *wake)
     if (!play_all(s_squeeze, wake)) {
         return;
     }
-    hold_while(finger_down, HOLD_SQUEEZE_MAX_MS, wake);
+    hold_while(finger_or_button_down, HOLD_SQUEEZE_MAX_MS, wake);
     if (g_muse.shake) {
         return;
     }
@@ -164,6 +176,104 @@ static void react_listen(TickType_t *wake)
     }
 }
 
+// Something went wrong (no WiFi, no key, Deepgram error): a puzzled head shake.
+static void react_error(TickType_t *wake)
+{
+    g_muse.agent_error = false;
+    audio_play(MUSE_SOUND_WHOOSH);
+    g_muse.expr_override = MUSE_EXPR_SURPRISED;
+    look(MUSE_GAZE_TARGET, 0, 0);
+    const int mid = s_lean->count / 2;
+    play(s_lean, mid, mid - 2, 15, wake);
+    play(s_lean, mid - 2, mid + 2, 15, wake);
+    play(s_lean, mid + 2, mid, 15, wake);
+}
+
+static void play_action(int action, TickType_t *wake)
+{
+    const muse_clip_t *clips[] = {s_wave, s_giggle, s_cheer, s_dizzy};
+    if (action >= 0 && action < 4) {
+        play_all(clips[action], wake);
+    }
+}
+
+// Voice chat: listen while the screen is held, think, then answer with the
+// mouth following the reply. Holding again while Muse talks interrupts it.
+static void react_talk(TickType_t *wake)
+{
+    for (;;) {
+        g_muse.agent_action = MUSE_ACTION_NONE;
+        if (!agent_begin_turn()) {
+            react_error(wake);
+            return;
+        }
+        g_muse.expr_override = MUSE_EXPR_NORMAL;
+        look(MUSE_GAZE_TARGET, 0.0f, -0.6f);
+        play_all(s_listen, wake);  // tilt the head to listen
+        hold_while(talking_to_muse, TALK_HOLD_MAX_MS, wake);
+        agent_end_turn();
+
+        bool tilted = true, interrupted = false;
+        int idle = 0;
+        const int64_t give_up = muse_now_ms() + CHAT_MAX_MS;
+        while (muse_now_ms() < give_up && !g_muse.shake) {
+            if (g_muse.agent_error) {
+                react_error(wake);
+                return;
+            }
+            muse_event_t ev;
+            if (xQueueReceive(s_events, &ev, 0) == pdTRUE && ev == MUSE_EV_TALK) {
+                agent_stop_speaking();  // held again: interrupt and listen
+                interrupted = true;
+                break;
+            }
+            const int state = g_muse.agent_state;
+            if (state == MUSE_AGENT_SPEAKING) {
+                if (tilted) {
+                    play(s_listen, s_listen->count - 1, 0, 0, wake);
+                    tilted = false;
+                }
+                g_muse.expr_override = MUSE_EXPR_TALK;
+                look(MUSE_GAZE_TARGET, 0, 0);
+                const int action = g_muse.agent_action;
+                if (action != MUSE_ACTION_NONE) {
+                    g_muse.agent_action = MUSE_ACTION_NONE;
+                    play_action(action, wake);
+                    continue;
+                }
+                clips_show(s_idle->first + idle);
+                idle = (idle + 1) % s_idle->count;
+                tick(wake, s_idle->fps);
+            } else if (state == MUSE_AGENT_THINKING || state == MUSE_AGENT_CONNECTING ||
+                       state == MUSE_AGENT_LISTENING) {
+                // Thinking: keep the head tilted and glance up and aside.
+                look(MUSE_GAZE_TARGET, -0.7f, -0.8f);
+                tick(wake, 10);
+            } else {
+                break;  // the reply has finished, or none came
+            }
+        }
+        if (!interrupted) {
+            if (tilted) {
+                play(s_listen, s_listen->count - 1, 0, 0, wake);
+            }
+            const int action = g_muse.agent_action;
+            if (action != MUSE_ACTION_NONE) {
+                g_muse.agent_action = MUSE_ACTION_NONE;
+                play_action(action, wake);
+            }
+            return;
+        }
+    }
+}
+
+static void react_setup(TickType_t *wake)
+{
+    (void)wake;
+    audio_play(MUSE_SOUND_WHOOSH);
+    setup_ui_open();
+}
+
 static void react(muse_event_t ev, TickType_t *wake)
 {
     switch (ev) {
@@ -182,6 +292,15 @@ static void react(muse_event_t ev, TickType_t *wake)
     case MUSE_EV_SWIPE_RIGHT:
         react_swipe(ev == MUSE_EV_SWIPE_RIGHT, wake);
         break;
+    case MUSE_EV_TALK:
+        react_talk(wake);
+        break;
+    case MUSE_EV_BUTTON:
+        react_squeeze(wake);
+        break;
+    case MUSE_EV_SETUP:
+        react_setup(wake);
+        break;
     }
 }
 
@@ -199,6 +318,15 @@ static void behavior_task(void *arg)
     int idle = 0;
     bool leaning = false;
     for (;;) {
+        if (g_muse.setup_request) {
+            g_muse.setup_request = false;
+            setup_ui_open();
+        }
+        if (setup_ui_active()) {
+            vTaskDelay(pdMS_TO_TICKS(100));  // the setup screens are up
+            wake = xTaskGetTickCount();
+            continue;
+        }
         if (g_muse.shake) {
             react_dizzy(&wake);
             settle();
@@ -211,6 +339,7 @@ static void behavior_task(void *arg)
             idle = 0;
             continue;
         }
+        g_muse.agent_error = false;  // errors outside a conversation need no reaction
         if (g_muse.voice_active && !g_muse.touch_down) {
             react_listen(&wake);
             settle();

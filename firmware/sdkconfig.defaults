@@ -16,8 +16,37 @@ CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
 
-# LVGL
+# LVGL. A 20-line draw buffer (15 KB) stays in internal DMA memory, so display
+# transfers don't need a temporary DMA copy, which can fail once WiFi is running.
+CONFIG_BSP_DISPLAY_LVGL_BUF_HEIGHT=20
 CONFIG_LV_DEF_REFR_PERIOD=15
+# LVGL warnings (including out-of-memory) go to the log
+CONFIG_LV_USE_LOG=y
+CONFIG_LV_LOG_LEVEL_WARN=y
+CONFIG_LV_LOG_PRINTF=y
+# Larger font for the setup screens and keyboard
+CONFIG_LV_FONT_MONTSERRAT_20=y
+CONFIG_LV_FONT_MONTSERRAT_24=y
 CONFIG_LV_USE_CLIB_MALLOC=y
 CONFIG_LV_USE_CLIB_STRING=y
 CONFIG_LV_ATTRIBUTE_FAST_MEM_USE_IRAM=y
+
+# Voice chat: TLS to Deepgram (settings proven on this board by esp32-agui)
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+CONFIG_MBEDTLS_SSL_PROTO_TLS1_3=y
+CONFIG_MBEDTLS_SSL_TLS1_3_KEXM_EPHEMERAL=y
+# mbedTLS, WiFi and lwIP buffers in PSRAM keep internal RAM free for the display and audio
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+# Internal RAM is shared by the display, audio and WiFi: keep WiFi buffers small
+# or in PSRAM, and its code in flash rather than IRAM.
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=8
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER=y
+# CONFIG_ESP_WIFI_IRAM_OPT is not set
+# CONFIG_ESP_WIFI_RX_IRAM_OPT is not set
+# Limit WiFi transmit power to 14 dBm: full-power bursts dip the supply and can blank the AMOLED
+CONFIG_ESP_PHY_MAX_WIFI_TX_POWER=14
+# Phones send long headers to the setup page
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024

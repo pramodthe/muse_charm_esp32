@@ -30,7 +30,29 @@ typedef enum {
     MUSE_EV_LONG_PRESS,
     MUSE_EV_SWIPE_LEFT,
     MUSE_EV_SWIPE_RIGHT,
+    MUSE_EV_TALK,          // screen held still: start a voice chat turn
+    MUSE_EV_BUTTON,        // BOOT button pressed: squeeze
+    MUSE_EV_SETUP,         // BOOT button held 3 s: open the setup page
 } muse_event_t;
+
+// Voice chat progress (agent.c).
+typedef enum {
+    MUSE_AGENT_OFF = 0,     // no Deepgram key saved
+    MUSE_AGENT_IDLE,
+    MUSE_AGENT_CONNECTING,
+    MUSE_AGENT_LISTENING,
+    MUSE_AGENT_THINKING,
+    MUSE_AGENT_SPEAKING,
+} muse_agent_state_t;
+
+// Animations the AI can ask for while it talks.
+typedef enum {
+    MUSE_ACTION_NONE = -1,
+    MUSE_ACTION_WAVE = 0,
+    MUSE_ACTION_GIGGLE,
+    MUSE_ACTION_CHEER,
+    MUSE_ACTION_DIZZY,
+} muse_action_t;
 
 // State shared between tasks. Each field has one writer and is 32 bits, so
 // plain volatile access is enough.
@@ -51,7 +73,14 @@ typedef struct {
     volatile bool shake;           // set by motion, cleared by behaviour
 
     volatile bool voice_active;    // (audio)
-    volatile float mouth_level;    // 0..1 (audio)
+    volatile float mouth_level;    // 0..1, from the voice or Muse's own reply (audio)
+    volatile bool button_down;     // BOOT button (touch)
+
+    volatile int agent_state;      // muse_agent_state_t (agent)
+    volatile int agent_action;     // muse_action_t requested by the AI, cleared by behaviour
+    volatile bool agent_error;     // set by agent, cleared by behaviour
+    volatile bool setup_active;    // setup portal open (wifi)
+    volatile bool setup_request;   // open on-screen setup (wifi -> behaviour)
 } muse_state_t;
 
 extern muse_state_t g_muse;

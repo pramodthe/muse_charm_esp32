@@ -12,9 +12,10 @@ menu "Muse charm"
 
         config MUSE_SPEAKER_VOLUME
             int "Speaker volume (%)"
-            depends on MUSE_SOUND_ENABLE
             range 0 100
             default 65
+            help
+                Applies to the chirps and to Muse's spoken replies.
     endmenu
 
     menu "Voice"
@@ -22,11 +23,11 @@ menu "Muse charm"
             bool "React to voice on the microphone"
             default y
             help
-                Muse looks up and moves its mouth with your voice.
+                Without voice chat, Muse looks up and moves its mouth with your
+                voice. Off while voice chat is set up.
 
         config MUSE_MIC_GAIN_DB
             int "Microphone gain (dB)"
-            depends on MUSE_VOICE_ENABLE
             range 0 42
             default 30
 
@@ -65,6 +66,47 @@ menu "Muse charm"
             depends on MUSE_MOTION_ENABLE
             range 30 300
             default 80
+    endmenu
+
+    menu "Voice chat (Deepgram)"
+        config MUSE_AGENT_ENABLE
+            bool "Talk to Muse through the Deepgram Voice Agent API"
+            default y
+            help
+                Hold the screen to talk; Muse answers out loud. Needs WiFi and a
+                Deepgram API key, both entered on the setup page (hold the BOOT
+                button for 3 seconds, then join the "Muse-setup" WiFi).
+
+        config MUSE_AGENT_DEFAULT_VOICE
+            string "Default voice"
+            default "aura-2-thalia-en"
+            help
+                A Deepgram Aura voice. The setup page can change it.
+
+        config MUSE_AGENT_LISTEN_MODEL
+            string "Speech-to-text model"
+            default "nova-3"
+
+        config MUSE_AGENT_THINK_PROVIDER
+            string "LLM provider"
+            default "open_ai"
+            help
+                Deepgram think provider type, for example open_ai, anthropic or google.
+
+        config MUSE_AGENT_THINK_MODEL
+            string "LLM model"
+            default "gpt-4o-mini"
+
+        config MUSE_AGENT_PROMPT
+            string "Default personality"
+            default "You are Muse, a tiny cheerful companion who lives inside a little screen. You are warm, playful and curious, and you talk like a kind friend. Everything you say is spoken aloud, so keep each reply to one or two short sentences and never use lists, markdown, emojis or stage directions. When it fits, call muse_action to wave, giggle, cheer or act dizzy."
+            help
+                The setup page can replace it.
+
+        config MUSE_AGENT_IDLE_CLOSE_S
+            int "Close the connection after this many quiet seconds"
+            range 10 3600
+            default 120
     endmenu
 
     config MUSE_DEBUG_LOG

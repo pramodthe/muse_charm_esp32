@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0 (2026-11-11)
+
+- Voice chat through the Deepgram Voice Agent API: hold the screen to talk, Muse listens, thinks and answers out loud with its mouth following its voice. Holding again interrupts.
+- The AI can make Muse wave, giggle, cheer or go dizzy while it talks (function calling).
+- Muse-setup portal for WiFi, the Deepgram key, voice and personality, adapted from esp32-agui.
+- Squeeze moved to the BOOT button; holding BOOT for 3 s opens setup.
+- On-screen setup with a watch-style keyboard: pick WiFi, type the password, enter the Deepgram key on a hex keypad. Opens by itself when no saved network is in range. Tappable controls stay out of the rounded corners.
+- WPA3 networks supported; enterprise networks are detected and explained.
+- Fixed a dark screen: WiFi transmit power is capped at 14 dBm (full-power bursts dipped the supply), the brightness command is sent under the display lock, and the LVGL draw buffer lives in internal DMA memory.
+- Logs a warning if the display task ever stalls.
+
 ## 0.2.0 (2026-11-10)
 
 - Live face drawn with LVGL on top of the body frames, so the eyes follow your finger, blink and change expression at 30 fps.

@@ -15,6 +15,7 @@
 #include "clips.h"
 #include "esp_random.h"
 #include "muse.h"
+#include "wifi.h"
 
 #define GAZE_X_PX 3.5f
 #define GAZE_Y_PX 2.5f
@@ -37,6 +38,7 @@ typedef struct {
 static part_t s_eye[2], s_highlight[2], s_happy[2], s_squint[2], s_dizzy[2];
 static part_t s_smile, s_open_mouth, s_tongue, s_round_mouth;
 static lv_point_precise_t s_squint_pts[2][3];
+static lv_obj_t *s_setup_hint;
 
 static float s_gx, s_gy;      // smoothed gaze, -1..1
 static int s_blink_tick = -1;  // -1 while the eyes are open
@@ -234,9 +236,12 @@ void face_apply(void)
 
 // Gaze smoothing, blinks, idle glances and the dizzy spin. Runs in the LVGL
 // task, so the lock is already held.
+volatile uint32_t g_face_ticks;  // display liveness, watched by main.c
+
 static void face_tick(lv_timer_t *t)
 {
     (void)t;
+    g_face_ticks++;
     const int64_t now = muse_now_ms();
     float tx, ty;
     if (g_muse.touch_down) {
@@ -280,6 +285,13 @@ static void face_tick(lv_timer_t *t)
         }
     }
     s_spin = (s_spin + 24) % 360;
+    if (g_muse.setup_active == lv_obj_has_flag(s_setup_hint, LV_OBJ_FLAG_HIDDEN)) {
+        if (g_muse.setup_active) {
+            lv_obj_remove_flag(s_setup_hint, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_setup_hint, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
     face_apply();
 }
 
@@ -301,6 +313,15 @@ void face_create(lv_obj_t *parent)
     part_init(&s_open_mouth, make_arc(parent, COL_MOUTH, 9, false, 0, 180));
     part_init(&s_tongue, make_blob(parent, COL_TONGUE));
     part_init(&s_round_mouth, make_blob(parent, COL_MOUTH));
+
+    // Shown only while the setup portal is open.
+    s_setup_hint = lv_label_create(parent);
+    lv_label_set_text(s_setup_hint, "Setup: join Wi-Fi \"" WIFI_SETUP_SSID "\"");
+    lv_obj_set_style_text_color(s_setup_hint, lv_color_white(), 0);
+    lv_obj_set_style_text_opa(s_setup_hint, LV_OPA_80, 0);
+    lv_obj_align(s_setup_hint, LV_ALIGN_BOTTOM_MID, 0, -14);
+    lv_obj_remove_flag(s_setup_hint, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(s_setup_hint, LV_OBJ_FLAG_HIDDEN);
 
     s_next_blink_ms = muse_now_ms() + 2500;
     s_next_glance_ms = muse_now_ms() + 1500;
