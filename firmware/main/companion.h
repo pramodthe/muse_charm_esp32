@@ -4,7 +4,8 @@
 // companion/muse_companion.py runs on the computer and announces itself on the
 // local network with a UDP beacon. Muse connects to it over a websocket and
 // receives the current mood (thinking, working, needs you) with a short
-// caption, plus one-off events (hello, done, oops...) to react to.
+// caption, plus one-off events (hello, done, oops...) to react to. Voice chat
+// (agent.c) is relayed over the same connection.
 #pragma once
 
 #include <stdbool.h>
@@ -37,3 +38,7 @@ bool companion_next_event(companion_event_t *out);
 
 // The caption for the current mood (g_muse.claude_mood).
 void companion_mood_caption(char *buf, size_t len);
+
+// Send to the server (voice chat). Return false when not linked.
+bool companion_send_text(const char *text);
+bool companion_send_binary(const void *data, size_t len);

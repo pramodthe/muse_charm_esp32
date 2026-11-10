@@ -2,11 +2,12 @@
 // Setup portal: SoftAP + web form + DNS catch-all so phones open the page
 // automatically. Adapted from net_prov/portal.c in esp32-agui.
 //
-// The form sets WiFi, the Deepgram API key, the voice and Muse's personality.
-// Fields left empty keep their saved value; the key is never shown back.
+// The form sets WiFi. (Voice chat settings live on the computer, with the
+// companion server.)
 
 #include "portal.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <netinet/in.h>
@@ -20,7 +21,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/task.h"
-#include "settings.h"
 #include "wifi.h"
 
 static const char *TAG = "portal";
@@ -34,31 +34,19 @@ static esp_netif_t *s_ap_netif;
 static EventGroupHandle_t s_events;
 static volatile bool s_dns_run;
 
-static const char *const VOICES[] = {
-    "aura-2-thalia-en", "aura-2-andromeda-en", "aura-2-helena-en", "aura-2-asteria-en", "aura-2-luna-en",
-    "aura-2-apollo-en", "aura-2-arcas-en",     "aura-2-aries-en",  "aura-2-orion-en",   "aura-2-zeus-en",
-};
-
-static const char PAGE_HEAD[] =
+static const char PAGE[] =
     "<!doctype html><html><head><meta charset=utf-8><meta name=viewport "
     "content='width=device-width,initial-scale=1'><title>Muse setup</title>"
     "<style>body{font-family:system-ui,sans-serif;margin:1.5em;max-width:32em;color:#222}"
     "label{display:block;margin-top:1em;font-weight:600}"
-    "input,textarea{display:block;width:100%%;box-sizing:border-box;padding:.6em;margin:.3em 0;font-size:1em}"
-    "textarea{height:9em}small{color:#666}button{margin-top:1.2em;padding:.8em 1.4em;font-size:1em}"
+    "input{display:block;width:100%;box-sizing:border-box;padding:.6em;margin:.3em 0;font-size:1em}"
+    "small{color:#666}button{margin-top:1.2em;padding:.8em 1.4em;font-size:1em}"
     "</style></head><body><h2>Muse setup</h2><form method=POST action=/save>"
     "<label>WiFi network</label><input name=ssid autocomplete=off>"
     "<label>WiFi password</label><input name=pass type=password>"
-    "<label>Deepgram API key</label><input name=key type=password autocomplete=off "
-    "placeholder='%s'>"
-    "<small>From console.deepgram.com. Leave empty to keep the saved key.</small>"
-    "<label>Voice</label><input name=voice list=voices value='%s'><datalist id=voices>";
-
-static const char PAGE_TAIL[] =
-    "<small>Muse's personality. Empty uses the default.</small>"
     "<button type=submit>Save</button></form>"
-    "<p><small>Leave WiFi empty to keep the current network. After saving, Muse reconnects "
-    "and you can hold the screen to talk.</small></p></body></html>";
+    "<p><small>Voice chat and the Claude Code companion run on your computer: start "
+    "companion/muse_companion.py there and Muse finds it.</small></p></body></html>";
 
 // ---------------------------------------------------------------- helpers
 static int hexval(char c)
@@ -101,76 +89,18 @@ static bool form_field(const char *body, const char *name, char *out, size_t out
     return false;
 }
 
-// Append text to the response with HTML special characters escaped.
-static void send_escaped(httpd_req_t *req, const char *s)
-{
-    char buf[256];
-    size_t o = 0;
-    for (; *s; s++) {
-        const char *rep = NULL;
-        switch (*s) {
-        case '<': rep = "&lt;"; break;
-        case '>': rep = "&gt;"; break;
-        case '&': rep = "&amp;"; break;
-        case '\'': rep = "&#39;"; break;
-        case '"': rep = "&quot;"; break;
-        default: break;
-        }
-        const size_t need = rep ? strlen(rep) : 1;
-        if (o + need >= sizeof(buf)) {
-            httpd_resp_send_chunk(req, buf, o);
-            o = 0;
-        }
-        if (rep) {
-            memcpy(buf + o, rep, need);
-        } else {
-            buf[o] = *s;
-        }
-        o += need;
-    }
-    if (o) {
-        httpd_resp_send_chunk(req, buf, o);
-    }
-}
-
 // ---------------------------------------------------------------- handlers
 static esp_err_t root_get(httpd_req_t *req)
 {
-    static char value[SETTING_MAX_LEN];
-    char head[sizeof(PAGE_HEAD) + 160];
-    char voice[96];
-    if (!settings_get(SETTING_VOICE, voice, sizeof(voice))) {
-        strlcpy(voice, CONFIG_MUSE_AGENT_DEFAULT_VOICE, sizeof(voice));
-    }
-    const bool have_key = settings_has(SETTING_DEEPGRAM_KEY);
-    snprintf(head, sizeof(head), PAGE_HEAD, have_key ? "saved (leave empty to keep)" : "paste your key", voice);
-
     httpd_resp_set_type(req, "text/html");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    httpd_resp_send_chunk(req, head, HTTPD_RESP_USE_STRLEN);
-    for (size_t i = 0; i < sizeof(VOICES) / sizeof(VOICES[0]); i++) {
-        char opt[64];
-        snprintf(opt, sizeof(opt), "<option value='%s'>", VOICES[i]);
-        httpd_resp_send_chunk(req, opt, HTTPD_RESP_USE_STRLEN);
-    }
-    httpd_resp_send_chunk(req, "</datalist><label>Personality</label><textarea name=prompt placeholder='", HTTPD_RESP_USE_STRLEN);
-    send_escaped(req, CONFIG_MUSE_AGENT_PROMPT);
-    httpd_resp_send_chunk(req, "'>", HTTPD_RESP_USE_STRLEN);
-    if (settings_get(SETTING_PERSONALITY, value, sizeof(value))) {
-        send_escaped(req, value);
-    }
-    httpd_resp_send_chunk(req, "</textarea>", HTTPD_RESP_USE_STRLEN);
-    httpd_resp_send_chunk(req, PAGE_TAIL, HTTPD_RESP_USE_STRLEN);
-    return httpd_resp_send_chunk(req, NULL, 0);
+    return httpd_resp_send(req, PAGE, HTTPD_RESP_USE_STRLEN);
 }
 
 static esp_err_t save_post(httpd_req_t *req)
 {
     char *body = heap_caps_malloc(BODY_MAX, MALLOC_CAP_SPIRAM);
-    char *value = heap_caps_malloc(SETTING_MAX_LEN, MALLOC_CAP_SPIRAM);
-    if (!body || !value) {
-        free(body);
-        free(value);
+    if (!body) {
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "out of memory");
     }
     const int total = req->content_len < BODY_MAX - 1 ? req->content_len : BODY_MAX - 1;
@@ -179,7 +109,6 @@ static esp_err_t save_post(httpd_req_t *req)
         const int r = httpd_req_recv(req, body + got, total - got);
         if (r <= 0) {
             free(body);
-            free(value);
             return ESP_FAIL;
         }
         got += r;
@@ -192,30 +121,18 @@ static esp_err_t save_post(httpd_req_t *req)
         form_field(body, "pass", pass, sizeof(pass));
         wifi_creds_add(ssid, pass);
     }
-    const bool key = form_field(body, "key", value, SETTING_MAX_LEN) && value[0];
-    if (key) {
-        settings_set(SETTING_DEEPGRAM_KEY, value);
-    }
-    if (form_field(body, "voice", value, SETTING_MAX_LEN)) {
-        settings_set(SETTING_VOICE, value);  // empty falls back to the default voice
-    }
-    if (form_field(body, "prompt", value, SETTING_MAX_LEN)) {
-        settings_set(SETTING_PERSONALITY, value);  // empty falls back to the default personality
-    }
-    ESP_LOGI(TAG, "saved: wifi %s, key %s", wifi ? "updated" : "unchanged", key ? "updated" : "unchanged");
+    ESP_LOGI(TAG, "saved: wifi %s", wifi ? "updated" : "unchanged");
 
     httpd_resp_set_type(req, "text/html");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     snprintf(body, BODY_MAX,
              "<!doctype html><html><head><meta charset=utf-8><meta name=viewport "
              "content='width=device-width,initial-scale=1'></head>"
-             "<body style='font-family:system-ui,sans-serif;margin:1.5em'><h3>Saved</h3><ul>"
-             "<li>WiFi: <b>%s</b></li><li>Deepgram key: <b>%s</b></li></ul>"
-             "<p>Muse is reconnecting. Hold the screen to talk.</p></body></html>",
-             wifi ? "updated" : "unchanged", key ? "updated" : "unchanged");
+             "<body style='font-family:system-ui,sans-serif;margin:1.5em'><h3>Saved</h3>"
+             "<p>WiFi: <b>%s</b>. Muse is reconnecting.</p></body></html>",
+             wifi ? "updated" : "unchanged");
     httpd_resp_sendstr(req, body);
     free(body);
-    free(value);
     xEventGroupSetBits(s_events, BIT_SAVED);
     return ESP_OK;
 }

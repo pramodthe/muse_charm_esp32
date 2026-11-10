@@ -12,10 +12,10 @@
 //   motion.c    QMI8658 tilt and shake
 //   audio.c     ES8311 microphone and speaker
 //   sounds.c    the chirps
-//   agent.c     voice chat with the Deepgram Voice Agent API
+//   agent.c     voice chat, relayed by the companion server
 //   companion.c shows what Claude Code is doing on your computer
 //   wifi.c      saved networks and reconnects; portal.c the setup page
-//   settings.c  Deepgram key, voice and personality in NVS
+//   settings.c  NVS start-up
 
 #include "agent.h"
 #include "audio.h"

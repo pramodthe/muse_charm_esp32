@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""Muse companion: Muse shows what Claude Code is doing on this computer.
+"""Muse companion: Muse shows what Claude Code is doing on this computer, and
+you can talk to Muse.
 
 Claude Code hooks send each event to http://127.0.0.1:8765/hook (see
 install_hooks.py). This server turns the events into a mood and a short
 caption, and passes them to Muse over a websocket. Muse finds the server by
 itself: the server announces itself on the local network with a small UDP
 beacon, and Muse connects to ws://<this computer>:8765/device.
+
+Voice chat goes through the same connection: Muse streams its microphone here
+and this server talks to the Deepgram Voice Agent API (muse_voice.py), so the
+Deepgram key stays on this computer (~/.config/muse/deepgram_key).
 
     python3 muse_companion.py          run the server
     python3 muse_companion.py demo     play a made-up Claude Code session
@@ -23,15 +28,15 @@ project folder name.
 
 import argparse
 import asyncio
-import base64
-import hashlib
 import json
 import os
 import socket
-import struct
 import sys
 import time
 import urllib.request
+
+import muse_voice
+import muse_ws as ws
 
 PORT = 8765
 BEACON_PORT = 47800
@@ -40,7 +45,6 @@ SESSION_STALE_S = 30 * 60   # forget a session that has gone quiet this long
 THINKING_STALE_S = 5 * 60   # "thinking" with no news this long: Claude was interrupted
 OOPS_EVERY_S = 10           # at most one "that failed" reaction per session this often
 CAPTION_MAX = 28            # characters that fit under Muse on one line
-WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 MAX_HOOK_BYTES = 32 * 1024 * 1024
 
 # Moods last until the next event; events are one-off reactions.
@@ -126,7 +130,7 @@ class Hub:
     def __init__(self, name):
         self.name = name
         self.sessions = {}
-        self.devices = {}     # writer -> device name
+        self.devices = {}     # writer -> DeviceLink
         self.sent = None      # last mood message, re-sent to new devices
 
     # ------------------------------------------------------------ hook events
@@ -225,46 +229,55 @@ class Hub:
         self.broadcast(msg)
 
     def broadcast(self, msg):
-        data = frame(0x1, json.dumps(msg).encode())
-        for w in list(self.devices):
-            try:
-                w.write(data)
-            except Exception:
-                self.devices.pop(w, None)
+        for link in list(self.devices.values()):
+            link.send_json(msg)
+
+    def claude_summary(self):
+        """What Claude Code is up to, for Muse to talk about."""
+        now = time.time()
+        self.focus()  # drops stale sessions
+        words = {"needs_you": "waiting for the user's permission", "working": "running a tool",
+                 "thinking": "thinking", "idle": "idle, waiting for the user"}
+        sessions = [{"project": s.project or "unknown", "state": words.get(s.mood, s.mood),
+                     "doing": s.caption, "minutes_since_last_activity": int((now - s.updated) // 60)}
+                    for s in self.sessions.values()]
+        if not sessions:
+            return json.dumps({"sessions": [], "note": "No Claude Code sessions are running right now."})
+        return json.dumps({"sessions": sessions})
 
     # ------------------------------------------------------------ devices
     async def serve_device(self, reader, writer, peer):
-        self.devices[writer] = peer
+        link = DeviceLink(self, writer, peer)
+        self.devices[writer] = link
         log("Muse connected from", peer)
-        writer.write(frame(0x1, json.dumps({"type": "hello", "name": self.name}).encode()))
+        link.send_json({"type": "hello", "name": self.name})
+        link.announce_voice()
         if self.sent:
-            writer.write(frame(0x1, json.dumps(self.sent).encode()))
+            link.send_json(self.sent)
         try:
             while True:
-                op, data = await asyncio.wait_for(read_frame(reader), 60)
-                if op == 0x8:       # close
-                    writer.write(frame(0x8, data[:2]))
+                op, data = await asyncio.wait_for(ws.read_message(reader, writer), 60)
+                if op == ws.CLOSE:
+                    writer.write(ws.frame(ws.CLOSE, data[:2]))
                     break
-                if op == 0x9:       # ping
-                    writer.write(frame(0xA, data))
-                elif op == 0x1:
-                    try:
-                        info = json.loads(data)
-                        log("Muse says", info)
-                    except ValueError:
-                        pass
+                if op == ws.BINARY:
+                    link.voice.mic(data)
+                elif op == ws.TEXT:
+                    link.on_text(data)
                 await writer.drain()
         except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError, OSError):
             pass
         finally:
             self.devices.pop(writer, None)
+            link.close()
             log("Muse disconnected", peer)
             writer.close()
 
     def status(self):
         return {
             "server": self.name,
-            "devices": list(self.devices.values()),
+            "devices": [link.peer for link in self.devices.values()],
+            "voice": muse_voice.key_status()[1] or "ready",
             "showing": self.sent,
             "sessions": [
                 {"project": s.project, "mood": s.mood, "caption": s.caption,
@@ -274,32 +287,77 @@ class Hub:
         }
 
 
-# ---------------------------------------------------------------- websocket frames
-def frame(op, payload):
-    n = len(payload)
-    if n < 126:
-        head = struct.pack("!BB", 0x80 | op, n)
-    elif n < 65536:
-        head = struct.pack("!BBH", 0x80 | op, 126, n)
-    else:
-        head = struct.pack("!BBQ", 0x80 | op, 127, n)
-    return head + payload
+class DeviceLink:
+    """One connected Muse: its websocket, and its voice conversation."""
 
+    def __init__(self, hub, writer, peer):
+        self.hub, self.writer, self.peer = hub, writer, peer
+        self.voice = muse_voice.Voice(self, hub.claude_summary)
+        self.voice_queue = asyncio.Queue()   # reply audio and voice messages, in order
+        self.voice_on = None
+        self.sender = asyncio.ensure_future(self._send_voice())
 
-async def read_frame(reader):
-    b1, b2 = await reader.readexactly(2)
-    n = b2 & 0x7F
-    if n == 126:
-        (n,) = struct.unpack("!H", await reader.readexactly(2))
-    elif n == 127:
-        (n,) = struct.unpack("!Q", await reader.readexactly(8))
-    if n > 1 << 20:
-        raise ConnectionError("frame too large")
-    mask = await reader.readexactly(4) if b2 & 0x80 else None
-    data = await reader.readexactly(n)
-    if mask:
-        data = bytes(b ^ mask[i & 3] for i, b in enumerate(data))
-    return b1 & 0x0F, data
+    def send_json(self, msg):
+        try:
+            self.writer.write(ws.frame(ws.TEXT, json.dumps(msg).encode()))
+        except Exception:
+            pass
+
+    def announce_voice(self):
+        on = muse_voice.read_key() is not None
+        if on != self.voice_on:
+            self.voice_on = on
+            self.send_json({"type": "voice_ready", "on": on})
+
+    def on_text(self, data):
+        try:
+            msg = json.loads(data)
+        except ValueError:
+            return
+        t = msg.get("type")
+        if t == "talk_start":
+            self.voice.talk_start()
+        elif t == "talk_end":
+            self.voice.talk_end()
+        elif t == "talk_stop":
+            self.voice.talk_stop()
+        elif t == "hello":
+            log("Muse says hello", {k: v for k, v in msg.items() if k != "type"})
+
+    # Reply audio is paced: at most LEAD_S ahead of playback, so Muse's buffer
+    # never overflows and a "stop" takes effect quickly.
+    def queue_voice(self, kind, data):
+        self.voice_queue.put_nowait((kind, data))
+
+    def flush_voice(self):
+        while not self.voice_queue.empty():
+            self.voice_queue.get_nowait()
+
+    async def _send_voice(self):
+        start, sent = time.monotonic(), 0.0
+        try:
+            while True:
+                kind, data = await self.voice_queue.get()
+                if kind == "start":
+                    start, sent = time.monotonic(), 0.0
+                    self.send_json({"type": "voice", "state": "speaking"})
+                elif kind == "json":
+                    self.send_json(data)
+                elif kind == "audio":
+                    ahead = sent - (time.monotonic() - start)
+                    if ahead < 0:
+                        start, sent = time.monotonic(), 0.0   # fell behind: restart the clock
+                    elif ahead > muse_voice.LEAD_S:
+                        await asyncio.sleep(ahead - muse_voice.LEAD_S)
+                    self.writer.write(ws.frame(ws.BINARY, data))
+                    sent += len(data) / muse_voice.BYTES_PER_S
+                    await self.writer.drain()
+        except (asyncio.CancelledError, ConnectionError, OSError):
+            pass
+
+    def close(self):
+        self.sender.cancel()
+        self.voice.close()
 
 
 # ---------------------------------------------------------------- HTTP
@@ -349,9 +407,8 @@ async def handle(hub, reader, writer):
 
         if path == "/device" and headers.get("upgrade", "").lower() == "websocket":
             key = headers.get("sec-websocket-key", "")
-            accept = base64.b64encode(hashlib.sha1((key + WS_GUID).encode()).digest()).decode()
             writer.write(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
-                          "Sec-WebSocket-Accept: %s\r\n\r\n" % accept).encode())
+                          "Sec-WebSocket-Accept: %s\r\n\r\n" % ws.accept_key(key)).encode())
             await writer.drain()
             await hub.serve_device(reader, writer, peer)
             return
@@ -407,13 +464,17 @@ async def beacon(hub, port):
 
 
 async def keepalive(hub):
+    n = 0
     while True:
-        await asyncio.sleep(20)
-        for w in list(hub.devices):
-            try:
-                w.write(frame(0x9, b""))
-            except Exception:
-                hub.devices.pop(w, None)
+        await asyncio.sleep(5)
+        n += 1
+        for link in list(hub.devices.values()):
+            link.announce_voice()           # the key file may have appeared
+            if n % 4 == 0:
+                try:
+                    link.writer.write(ws.frame(ws.PING, b""))
+                except Exception:
+                    pass
         s = hub.focus()
         now = (s.mood, s.caption) if s else ("idle", "")
         if hub.sent and (hub.sent.get("mood"), hub.sent.get("caption")) != now:
@@ -430,6 +491,7 @@ async def serve(port):
     server = await asyncio.start_server(lambda r, w: handle(hub, r, w), host="0.0.0.0", port=port,
                                         limit=1 << 16)
     log("Muse companion on port %d (%s, %s)" % (port, hub.name, local_ip() or "no network"))
+    log("voice chat:", muse_voice.key_status()[1] or "ready")
     log("waiting for Muse and for Claude Code hooks; Ctrl-C to stop")
     tasks = [asyncio.ensure_future(beacon(hub, port)), asyncio.ensure_future(keepalive(hub))]  # keep references
     async with server:

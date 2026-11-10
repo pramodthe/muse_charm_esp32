@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
-// Voice chat through the Deepgram Voice Agent API: one secure websocket that
-// does speech-to-text, the AI reply and text-to-speech.
+// Voice chat, relayed by the companion server on your computer. The server
+// holds the Deepgram key and talks to the Deepgram Voice Agent API; Muse only
+// streams audio over its companion connection.
 //
-//   hold the screen  agent_begin_turn()  microphone streams to Deepgram
+//   hold the screen  agent_begin_turn()  microphone streams to the server
 //   let go           agent_end_turn()    Muse thinks, then the reply plays
 //
 // Progress is published in g_muse.agent_state, and actions the AI asks for
@@ -15,14 +16,10 @@
 // Allocate buffers and start the agent task. Call once at start-up.
 void agent_init(void);
 
-// True when a Deepgram key is saved.
+// True when linked to the companion server and it has a Deepgram key.
 bool agent_configured(void);
 
-// Re-check the key after setup (switches voice chat on or off).
-void agent_refresh(void);
-
-// Start listening (connects first if needed). Returns false if there is no
-// key or no WiFi.
+// Start listening. Returns false when voice chat is not available.
 bool agent_begin_turn(void);
 
 // Finish the utterance; the reply follows.
@@ -36,3 +33,9 @@ void agent_stop_speaking(void);
 bool agent_listening(void);
 void agent_push_mic(const int16_t *pcm, int samples);
 int agent_pull_speech(int16_t *pcm, int samples);
+
+// For companion.c: the link and what the server says.
+void agent_on_link_lost(void);
+void agent_on_voice_ready(bool on);
+void agent_on_voice(const char *state, const char *action, const char *error);
+void agent_on_audio(const void *data, int len);

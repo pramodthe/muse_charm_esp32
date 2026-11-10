@@ -5,6 +5,8 @@
 //   {"type":"hello","name":"pramods mac"}
 //   {"type":"claude","mood":"working","caption":"Editing face.c"}
 //   {"type":"claude","mood":"idle","caption":"","event":"done","event_caption":"Done!"}
+//   {"type":"voice_ready","on":true}, {"type":"voice",...} and binary reply
+//   audio, which go to agent.c
 
 #include "companion.h"
 
@@ -12,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "agent.h"
 #include "cJSON.h"
 #include "esp_log.h"
 #include "esp_websocket_client.h"
@@ -36,6 +39,8 @@ static volatile bool s_connected, s_hello_due;
 static volatile int64_t s_offline_since_ms;
 static QueueHandle_t s_events;
 static SemaphoreHandle_t s_lock;
+static SemaphoreHandle_t s_ws_lock;  // s_ws may be destroyed while another task sends
+static int s_last_op;
 static char s_mood_caption[COMPANION_CAPTION_LEN];
 static char s_uri[96];
 static char s_rx[RX_MAX + 1];  // one message, reassembled if it came in pieces
@@ -88,6 +93,12 @@ static void handle_message(const char *text, int len)
         snprintf(caption, sizeof(caption), "Linked to %.30s", name && name[0] ? name : "your computer");
         ESP_LOGI(TAG, "%s", caption);
         post_event(COMPANION_LINKED, caption);
+    } else if (type && strcmp(type, "voice_ready") == 0) {
+        agent_on_voice_ready(cJSON_IsTrue(cJSON_GetObjectItem(root, "on")));
+    } else if (type && strcmp(type, "voice") == 0) {
+        agent_on_voice(cJSON_GetStringValue(cJSON_GetObjectItem(root, "state")),
+                       cJSON_GetStringValue(cJSON_GetObjectItem(root, "action")),
+                       cJSON_GetStringValue(cJSON_GetObjectItem(root, "error")));
     } else if (type && strcmp(type, "claude") == 0) {
         const char *mood = cJSON_GetStringValue(cJSON_GetObjectItem(root, "mood"));
         const char *caption = cJSON_GetStringValue(cJSON_GetObjectItem(root, "caption"));
@@ -114,6 +125,7 @@ static void go_offline(void)
     s_connected = false;
     s_offline_since_ms = muse_now_ms();
     g_muse.claude_mood = MUSE_MOOD_OFF;
+    agent_on_link_lost();
 }
 
 static void on_ws_event(void *arg, esp_event_base_t base, int32_t id, void *data)
@@ -136,8 +148,14 @@ static void on_ws_event(void *arg, esp_event_base_t base, int32_t id, void *data
         }
         break;
     case WEBSOCKET_EVENT_DATA:
-        if (d->op_code != 0x1 && d->op_code != 0x0) {
+        if (d->op_code == 0x1 || d->op_code == 0x2) {
+            s_last_op = d->op_code;
+        } else if (d->op_code != 0x0) {
             break;  // pings, pongs and close frames
+        }
+        if (s_last_op == 0x2) {
+            agent_on_audio(d->data_ptr, d->data_len);  // reply audio
+            break;
         }
         if (d->payload_len > RX_MAX || d->payload_offset + d->data_len > RX_MAX) {
             break;  // not from our server
@@ -203,7 +221,7 @@ static void open_ws(void)
 {
     const esp_websocket_client_config_t cfg = {
         .uri = s_uri,
-        .buffer_size = 1024,
+        .buffer_size = 2048,
         .task_stack = 4096,
         .network_timeout_ms = 5000,
         .reconnect_timeout_ms = 3000,
@@ -223,6 +241,14 @@ static void open_ws(void)
     }
 }
 
+static void destroy_ws(void)
+{
+    xSemaphoreTake(s_ws_lock, portMAX_DELAY);
+    esp_websocket_client_destroy(s_ws);
+    s_ws = NULL;
+    xSemaphoreGive(s_ws_lock);
+}
+
 static void companion_task(void *arg)
 {
     (void)arg;
@@ -230,8 +256,7 @@ static void companion_task(void *arg)
     for (;;) {
         if (!wifi_connected()) {
             if (s_ws) {
-                esp_websocket_client_destroy(s_ws);
-                s_ws = NULL;
+                destroy_ws();
                 go_offline();
             }
             vTaskDelay(pdMS_TO_TICKS(1000));
@@ -240,13 +265,11 @@ static void companion_task(void *arg)
         if (s_ws) {
             if (s_hello_due && s_connected) {
                 s_hello_due = false;
-                static const char hello[] = "{\"type\":\"hello\",\"name\":\"Muse\"}";
-                esp_websocket_client_send_text(s_ws, hello, sizeof(hello) - 1, pdMS_TO_TICKS(1000));
+                companion_send_text("{\"type\":\"hello\",\"name\":\"Muse\",\"voice\":1}");
             }
             if (!s_connected && muse_now_ms() - s_offline_since_ms > LOST_AFTER_MS) {
                 ESP_LOGI(TAG, "no answer from %s; looking for the server again", s_uri);
-                esp_websocket_client_destroy(s_ws);
-                s_ws = NULL;
+                destroy_ws();
                 said_looking = false;
             }
             vTaskDelay(pdMS_TO_TICKS(300));
@@ -268,6 +291,7 @@ void companion_start(void)
 {
     s_events = xQueueCreate(6, sizeof(companion_event_t));
     s_lock = xSemaphoreCreateMutex();
+    s_ws_lock = xSemaphoreCreateMutex();
     g_muse.claude_mood = MUSE_MOOD_OFF;
     xTaskCreatePinnedToCore(companion_task, "muse_companion", 4096, NULL, 2, NULL, 0);
 }
@@ -280,6 +304,31 @@ bool companion_connected(void)
 bool companion_next_event(companion_event_t *out)
 {
     return s_events && xQueueReceive(s_events, out, 0) == pdTRUE;
+}
+
+static bool ws_send(bool text, const void *data, size_t len)
+{
+    if (!s_ws_lock || !s_connected) {
+        return false;
+    }
+    xSemaphoreTake(s_ws_lock, portMAX_DELAY);
+    int n = -1;
+    if (s_ws && s_connected) {
+        n = text ? esp_websocket_client_send_text(s_ws, data, len, pdMS_TO_TICKS(500))
+                 : esp_websocket_client_send_bin(s_ws, data, len, pdMS_TO_TICKS(500));
+    }
+    xSemaphoreGive(s_ws_lock);
+    return n >= 0;
+}
+
+bool companion_send_text(const char *text)
+{
+    return ws_send(true, text, strlen(text));
+}
+
+bool companion_send_binary(const void *data, size_t len)
+{
+    return ws_send(false, data, len);
 }
 
 void companion_mood_caption(char *buf, size_t len)

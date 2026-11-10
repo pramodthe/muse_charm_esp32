@@ -2,6 +2,7 @@
 
 ## 0.4.0 (unreleased)
 
+- Voice chat moved to the companion server: Muse streams audio to your computer, which holds the Deepgram key and talks to the Deepgram Voice Agent API. No key to type on Muse; the on-screen key page and the voice fields on the phone page are gone, and keys saved by 0.3.0 are erased from the board. Default LLM is Claude Haiku 4.5 through Deepgram; voice, model and personality are set in `~/.config/muse/voice.json`. Ask Muse what Claude is doing.
 - Claude Code companion: Muse shows what Claude Code is doing on your computer (thinking, running a tool, waiting for your permission, done), with a caption under Muse. `companion/muse_companion.py` receives Claude Code's hooks and `companion/install_hooks.py` adds them. Muse finds the server with a UDP beacon.
 
 ## 0.3.0 (2026-11-11)

@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: MIT
-// Small NVS-backed store for user settings. Adapted from app_cfg in esp32-agui.
+// NVS start-up. Adapted from app_cfg in esp32-agui.
 
 #include "settings.h"
 
-#include <string.h>
-
+#include "esp_log.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 
-#define NAMESPACE "muse"
+#define OLD_NAMESPACE "muse"  // Deepgram key, voice and personality (0.3.0)
 
 esp_err_t settings_init(void)
 {
@@ -17,55 +16,18 @@ esp_err_t settings_init(void)
         nvs_flash_erase();
         err = nvs_flash_init();
     }
-    return err;
-}
-
-esp_err_t settings_set(const char *key, const char *value)
-{
-    nvs_handle_t h;
-    esp_err_t err = nvs_open(NAMESPACE, NVS_READWRITE, &h);
     if (err != ESP_OK) {
         return err;
     }
-    if (value && value[0]) {
-        err = nvs_set_str(h, key, value);
-    } else {
-        err = nvs_erase_key(h, key);
-        if (err == ESP_ERR_NVS_NOT_FOUND) {
-            err = ESP_OK;
+    nvs_handle_t h;
+    if (nvs_open(OLD_NAMESPACE, NVS_READWRITE, &h) == ESP_OK) {
+        size_t used = 0;
+        if (nvs_get_used_entry_count(h, &used) == ESP_OK && used > 0) {
+            nvs_erase_all(h);
+            nvs_commit(h);
+            ESP_LOGI("settings", "removed the voice settings saved on the board; they now live on the computer");
         }
+        nvs_close(h);
     }
-    if (err == ESP_OK) {
-        err = nvs_commit(h);
-    }
-    nvs_close(h);
-    return err;
-}
-
-bool settings_get(const char *key, char *buf, size_t len)
-{
-    if (!buf || len == 0) {
-        return false;
-    }
-    buf[0] = '\0';
-    nvs_handle_t h;
-    if (nvs_open(NAMESPACE, NVS_READONLY, &h) != ESP_OK) {
-        return false;
-    }
-    size_t n = len;
-    const esp_err_t err = nvs_get_str(h, key, buf, &n);
-    nvs_close(h);
-    return err == ESP_OK && buf[0] != '\0';
-}
-
-bool settings_has(const char *key)
-{
-    nvs_handle_t h;
-    if (nvs_open(NAMESPACE, NVS_READONLY, &h) != ESP_OK) {
-        return false;
-    }
-    size_t n = 0;
-    const esp_err_t err = nvs_get_str(h, key, NULL, &n);
-    nvs_close(h);
-    return err == ESP_OK && n > 1;
+    return ESP_OK;
 }

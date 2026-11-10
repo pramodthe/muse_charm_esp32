@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
-// On-screen setup: pick a WiFi network, type its password, and enter the
-// Deepgram key on Muse's own touch screen.
+// On-screen setup: pick a WiFi network and type its password on Muse's own
+// touch screen. (The Deepgram key for voice chat lives on your computer, with
+// the companion server.)
 //
-//   Wi-Fi list -> password -> Deepgram key -> all set
+//   Wi-Fi list -> password -> all set
 //
 // The keyboard follows the smartwatch style: no key borders, large letters,
 // every pixel of a row belongs to a key, the key is chosen when the finger
@@ -17,7 +18,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "agent.h"
 #include "behavior.h"
 #include "bsp/esp-bsp.h"
 #include "esp_log.h"
@@ -27,7 +27,6 @@
 #include "freertos/task.h"
 #include "lvgl.h"
 #include "muse.h"
-#include "settings.h"
 #include "wifi.h"
 
 static const char *TAG = "setup";
@@ -37,7 +36,6 @@ static const char *TAG = "setup";
 #define SAFE_X 34          // keep taps out of the rounded corners
 #define KEYBOARD_H 236
 #define MAX_NETWORKS 12
-#define KEY_LENGTH 40
 #define COL_ACCENT 0x5E9BFF
 #define COL_TEXT 0xFFFFFF
 #define COL_DIM 0x8E8E93
@@ -46,7 +44,7 @@ static const char *TAG = "setup";
 #define COL_ROW 0x1C1C1E
 
 typedef enum { CMD_SCAN, CMD_CONNECT, CMD_CLOSE } cmd_t;
-typedef enum { KB_LOWER, KB_UPPER, KB_NUMBERS, KB_SYMBOLS, KB_HEX } kb_mode_t;
+typedef enum { KB_LOWER, KB_UPPER, KB_NUMBERS, KB_SYMBOLS } kb_mode_t;
 
 static volatile bool s_active;
 static QueueHandle_t s_cmds;
@@ -61,7 +59,6 @@ static bool s_scanned;
 
 static void step_wifi(void);
 static void step_password(void);
-static void step_key(void);
 static void step_done(void);
 
 // ---------------------------------------------------------------- keyboard
@@ -107,19 +104,6 @@ static const lv_buttonmatrix_ctrl_t CTRL_SIGNS[] = {
     F | 3, K | 2, K | 2, K | 2, K | 2, K | 2, K | 2, F | 3,
     GAP | 2, F | 5, GAP | 2,
 };
-// Deepgram keys are 40 hex characters: a big keypad for those.
-static const char *const MAP_HEX[] = {
-    "1", "2", "3", "4", "5", "\n",
-    "6", "7", "8", "9", "0", "\n",
-    "a", "b", "c", "d", "e", "f", "\n",
-    " ", "abc", " ", "",
-};
-static const lv_buttonmatrix_ctrl_t CTRL_HEX[] = {
-    K | 1, K | 1, K | 1, K | 1, K | 1,
-    K | 1, K | 1, K | 1, K | 1, K | 1,
-    K | 1, K | 1, K | 1, K | 1, K | 1, K | 1,
-    GAP | 2, F | 2, GAP | 2,
-};
 
 static void keyboard_set_mode(kb_mode_t mode)
 {
@@ -140,10 +124,6 @@ static void keyboard_set_mode(kb_mode_t mode)
     case KB_SYMBOLS:
         lv_buttonmatrix_set_map(s_keys, MAP_SYMBOLS);
         lv_buttonmatrix_set_ctrl_map(s_keys, CTRL_SIGNS);
-        break;
-    case KB_HEX:
-        lv_buttonmatrix_set_map(s_keys, MAP_HEX);
-        lv_buttonmatrix_set_ctrl_map(s_keys, CTRL_HEX);
         break;
     }
 }
@@ -328,7 +308,6 @@ static void close_setup(lv_event_t *e)
     lv_obj_delete_async(s_screen);
     s_screen = s_page = NULL;
     send_cmd(CMD_CLOSE);
-    agent_refresh();
     behavior_post(MUSE_EV_TAP);  // say hi
     ESP_LOGI(TAG, "closed");
 }
@@ -368,7 +347,7 @@ static void on_network(lv_event_t *e)
 static void keep_wifi(lv_event_t *e)
 {
     (void)e;
-    step_key();
+    step_done();
 }
 
 static lv_obj_t *list_row(const char *icon, const char *text, uint32_t color, lv_event_cb_t cb, void *data)
@@ -475,54 +454,12 @@ static void step_password(void)
     entry_area(page, "Password", KB_LOWER, &lv_font_montserrat_24);
 }
 
-// ---------------------------------------------------------------- Deepgram key
-static void on_key_changed(lv_event_t *e)
-{
-    (void)e;
-    if (s_status) {
-        lv_label_set_text_fmt(s_status, "%u of %d characters", (unsigned)strlen(lv_textarea_get_text(s_text)),
-                              KEY_LENGTH);
-        lv_obj_set_style_text_color(s_status, lv_color_hex(COL_DIM), 0);
-    }
-}
-
-static void save_key(lv_event_t *e)
-{
-    (void)e;
-    const char *key = lv_textarea_get_text(s_text);
-    if (strlen(key) < 32) {
-        set_status("Too short: Deepgram keys are 40 characters", COL_ERROR);
-        return;
-    }
-    settings_set(SETTING_DEEPGRAM_KEY, key);
-    ESP_LOGI(TAG, "Deepgram key saved");
-    step_done();
-}
-
-static void skip_key(lv_event_t *e)
-{
-    (void)e;
-    step_done();
-}
-
-static void step_key(void)
-{
-    const bool saved = settings_has(SETTING_DEEPGRAM_KEY);
-    lv_obj_t *page = new_page("Deepgram API key  (console.deepgram.com)", saved ? "Keep" : "Skip", skip_key, "Save",
-                              save_key);
-    entry_area(page, "Key", KB_HEX, &lv_font_montserrat_20);
-    lv_obj_add_event_cb(s_text, on_key_changed, LV_EVENT_VALUE_CHANGED, NULL);
-    lv_label_set_text_fmt(s_status, "0 of %d characters", KEY_LENGTH);
-}
-
 // ---------------------------------------------------------------- done
 static void step_done(void)
 {
     lv_obj_t *page = new_page("All set", NULL, NULL, NULL, NULL);
-    const bool chat = settings_has(SETTING_DEEPGRAM_KEY);
     lv_obj_t *msg = text_label(page,
-                               chat ? "Hold the screen and talk to Muse.\nLet go, and Muse answers."
-                                    : "Muse works without voice chat.\nHold BOOT for 3 seconds to add a key later.",
+                               "Muse is on Wi-Fi.\nRun the Muse companion on your computer to talk to Muse.",
                                COL_TEXT, &lv_font_montserrat_20);
     lv_label_set_long_mode(msg, LV_LABEL_LONG_MODE_WRAP);
     lv_obj_set_width(msg, SCREEN_W - 2 * SAFE_X);
@@ -599,7 +536,7 @@ static void worker_task(void *arg)
             const bool ok = wifi_try_connect(s_ssid, s_pass, 15000);
             if (bsp_display_lock(0)) {
                 if (s_active && ok) {
-                    step_key();
+                    step_done();
                 } else if (s_active) {
                     set_status("Couldn't join. Check the password and try again.", COL_ERROR);
                 }

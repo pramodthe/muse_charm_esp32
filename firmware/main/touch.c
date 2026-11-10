@@ -3,8 +3,8 @@
 //
 // While a finger is down its position is published in g_muse so the eyes can
 // follow it. Gestures become events for the behaviour task. Holding the
-// screen still starts a voice chat turn when a Deepgram key is set up, and a
-// squeeze otherwise.
+// screen still starts a voice chat turn when voice chat is available (linked
+// to the companion server, which has a Deepgram key), and a squeeze otherwise.
 
 #include "touch.h"
 

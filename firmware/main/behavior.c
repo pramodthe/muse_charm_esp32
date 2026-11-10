@@ -5,7 +5,7 @@
 //   tap             wave + "hi!"
 //   tap the belly   giggle
 //   hold            voice chat: listens while held, thinks, then answers
-//                   (squeeze instead when no Deepgram key is set up)
+//                   (squeeze instead when voice chat is not available)
 //   BOOT button     squeeze while held, then cheer; hold 3 s for the setup page
 //   swipe           brushed aside, glances that way
 //   tilt            leans against the tilt to stay upright
@@ -207,7 +207,8 @@ static void head_shake(bool sound, TickType_t *wake)
     play(s_lean, mid + 2, mid, 15, wake);
 }
 
-// Something went wrong (no WiFi, no key, Deepgram error): a puzzled head shake.
+// Something went wrong (not linked, no key on the computer, Deepgram error):
+// a puzzled head shake.
 static void react_error(TickType_t *wake)
 {
     g_muse.agent_error = false;

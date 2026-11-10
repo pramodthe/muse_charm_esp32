@@ -17,5 +17,5 @@ dependencies:
   waveshare/qmi8658:
     version: "^2.0.0"
 
-  # Secure websocket for the Deepgram Voice Agent API
+  # Websocket to the companion server on your computer
   espressif/esp_websocket_client: "^1.7.0"

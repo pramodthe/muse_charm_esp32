@@ -37,7 +37,7 @@ typedef enum {
 
 // Voice chat progress (agent.c).
 typedef enum {
-    MUSE_AGENT_OFF = 0,     // no Deepgram key saved
+    MUSE_AGENT_OFF = 0,     // not available: not linked, or no Deepgram key on the computer
     MUSE_AGENT_IDLE,
     MUSE_AGENT_CONNECTING,
     MUSE_AGENT_LISTENING,
