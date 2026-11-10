@@ -1,0 +1,18 @@
+dependencies:
+  idf: ">=5.5,<6.1"
+
+  # Board support for the Waveshare ESP32-S3-Touch-AMOLED-1.8.
+  #   ^2.0.3  V2 board: CO5300 display + CST820 touch (tested)
+  #   1.1.4   original board: SH8601 display + FT3168 touch (untested, see README)
+  waveshare/esp32_s3_touch_amoled_1_8:
+    version: "^2.0.3"
+
+  lvgl/lvgl:
+    version: "9.4.*"
+
+  # Baseline JPEG decoder used for the body frames
+  espressif/esp_new_jpeg: "1.0.2"
+
+  # QMI8658 motion sensor (tilt and shake)
+  waveshare/qmi8658:
+    version: "^2.0.0"

@@ -1,0 +1,77 @@
+menu "Muse charm"
+
+    config MUSE_BRIGHTNESS
+        int "Display brightness (%)"
+        range 10 100
+        default 80
+
+    menu "Sound"
+        config MUSE_SOUND_ENABLE
+            bool "Play chirps on the speaker"
+            default y
+
+        config MUSE_SPEAKER_VOLUME
+            int "Speaker volume (%)"
+            depends on MUSE_SOUND_ENABLE
+            range 0 100
+            default 65
+    endmenu
+
+    menu "Voice"
+        config MUSE_VOICE_ENABLE
+            bool "React to voice on the microphone"
+            default y
+            help
+                Muse looks up and moves its mouth with your voice.
+
+        config MUSE_MIC_GAIN_DB
+            int "Microphone gain (dB)"
+            depends on MUSE_VOICE_ENABLE
+            range 0 42
+            default 30
+
+        config MUSE_VOICE_RATIO_X10
+            int "Voice threshold above room noise (x10)"
+            depends on MUSE_VOICE_ENABLE
+            range 12 100
+            default 28
+            help
+                How much louder than the learned room noise a sound must be to
+                count as voice. 28 means 2.8 times (about 9 dB). Lower it if
+                Muse ignores you, raise it if Muse reacts to background noise.
+    endmenu
+
+    menu "Motion"
+        config MUSE_MOTION_ENABLE
+            bool "Tilt and shake with the QMI8658 motion sensor"
+            default y
+
+        config MUSE_LEAN_INVERT
+            bool "Invert the lean direction"
+            depends on MUSE_MOTION_ENABLE
+            default n
+            help
+                Muse leans against the tilt to stay upright. Turn this on if it
+                leans the wrong way on your board.
+
+        config MUSE_TILT_ENTER_DEG
+            int "Tilt needed to start leaning (degrees)"
+            depends on MUSE_MOTION_ENABLE
+            range 2 30
+            default 7
+
+        config MUSE_SHAKE_THRESHOLD_X10
+            int "Shake threshold (m/s^2 x10)"
+            depends on MUSE_MOTION_ENABLE
+            range 30 300
+            default 80
+    endmenu
+
+    config MUSE_DEBUG_LOG
+        bool "Log microphone and motion readings"
+        default n
+        help
+            Prints the microphone level and accelerometer readings every few
+            seconds, useful for tuning the thresholds above.
+
+endmenu

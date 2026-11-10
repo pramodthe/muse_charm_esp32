@@ -1,0 +1,23 @@
+# ESP-IDF build output and generated config
+firmware/build/
+firmware/managed_components/
+firmware/dependencies.lock
+firmware/sdkconfig
+firmware/sdkconfig.old
+
+# Blender renders and previews
+build/
+*.blend1
+*.blend2
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+.venv/
