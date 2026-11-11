@@ -256,8 +256,8 @@ To set it up:
    fetches the worker's packages on the first job); otherwise
    `pip install deepagents langchain-anthropic` for a Python 3.11 or later and name it in
    `MUSE_WORKER_PYTHON`.
-3. Open the web app: `python3 companion/muse_companion.py results` opens it in your browser,
-   signed in (see [The web app](#the-web-app)).
+3. Open the web app: from the repository's folder, `python3 companion/muse_companion.py results`
+   opens it in your browser, signed in (see [The web app](#the-web-app)).
 
 A research job uses far more of the model than a spoken reply, and it is billed to your
 Anthropic account. `worker_model` in `voice.json` chooses the model. The worker is told today's
@@ -280,12 +280,35 @@ with colours and sizes from the Meta Horizon OS UI Set:
 For your own picture of Muse at the top, save it as `companion/avatar.png` (and deploy again
 if the server is online).
 
-`python3 companion/muse_companion.py results` opens it signed in, and the browser stays signed
-in; on a phone, paste the token from `~/.config/muse/server.json` once. Online, everything needs
-the token. With `MUSE_RESULTS_PUBLIC=true` in `.env` (then deploy again), anyone who has the
-server's address can read the requests and write-ups without it; asking, memory and Muse's status
-still need the token. The page is one file, [`companion/muse_results.py`](companion/muse_results.py),
-with no build step and nothing loaded from other sites.
+**Opening it, signed in.** Run this from the repository's folder (the path is wherever you
+cloned it):
+
+```sh
+cd ~/path/to/muse_charm_esp32
+python3 companion/muse_companion.py results
+```
+
+It opens the app in your default browser, already signed in. That browser stays signed in, so
+bookmark the page; you do this once per browser. On a phone or another browser, open the same
+address and paste the token when it asks. This copies the token to the clipboard on macOS
+without showing it:
+
+```sh
+python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.config/muse/server.json')))['token'],end='')" | pbcopy
+```
+
+**Why there is a sign-in.** An online server is on the public internet. Typing a request starts
+a research job that is billed to your Anthropic account, and Memory holds personal notes, so
+both are only for whoever has the token (the one `deploy_modal.py` made, kept in
+`~/.config/muse/server.json`). On your own computer, without an online server, there is no
+token and no sign-in.
+
+**Reading without signing in.** Add `MUSE_RESULTS_PUBLIC=true` to `.env` and deploy again:
+anyone who has the server's address can then read your requests and write-ups. Asking, Memory
+and Muse's status still need the token.
+
+The page is one file, [`companion/muse_results.py`](companion/muse_results.py), with no build
+step and nothing loaded from other sites.
 
 ### Muse speaks first
 
@@ -546,6 +569,18 @@ the scene, because the anchors are taken from them.
 - **Muse shakes its head when you hold BOOT:** voice chat couldn't start. The server's output says
   why: no key or an unusable key, or an error from Deepgram (for example an invalid voice
   name).
+- **Muse says it can't do research yet:** the server has no Anthropic key. Put it in `.env`
+  after `ANTHROPIC_API_KEY=` and, for an online server, run `python3 companion/deploy_modal.py`
+  again.
+- **A research job did not finish:** the web app says why under the request. A job is stopped
+  after 12 minutes; other causes are an Anthropic account without credit or with web search
+  turned off. `modal app logs muse-companion` shows the online server's log.
+- **The web app asks you to sign in:** open it with `python3 companion/muse_companion.py results`
+  from the repository's folder (see [The web app](#the-web-app)). "can't open file
+  .../companion/muse_companion.py" means the Terminal is in another folder: `cd` to the
+  repository first.
+- **The web app looks like an older version after a deploy:** reload the page without the
+  browser's cache (Cmd+Shift+R on macOS).
 - **Muse answers before you finish:** Deepgram ends the turn at a long pause. Keep talking, or
   press BOOT again to add more.
 - **The screen goes black but Muse still chirps:** the panel lost its settings in a supply dip.
