@@ -36,5 +36,10 @@ const muse_anchor_t *clips_anchor(int frame);
 // Create the full-screen canvas showing the current frame.
 lv_obj_t *clips_create_canvas(lv_obj_t *parent);
 
-// Decode a frame and put it on screen, moving the face with it.
+// Decode a frame and put it on screen through the camera, moving the face
+// with it.
 void clips_show(int frame);
+
+// Draw the frame on screen again if the camera has moved (for holding a pose
+// while the camera eases). Returns true if it did.
+bool clips_refresh(void);

@@ -24,6 +24,7 @@ typedef struct {
 } port_ctx_head_t;
 
 static esp_lcd_panel_io_handle_t s_io;
+static volatile int s_brightness = CONFIG_MUSE_BRIGHTNESS;  // percent
 
 static void reg(uint8_t cmd, const uint8_t *data, size_t len)
 {
@@ -35,7 +36,7 @@ static void reg(uint8_t cmd, const uint8_t *data, size_t len)
 // display lock held.
 static void write_settings(void)
 {
-    const uint8_t brightness = (uint8_t)(CONFIG_MUSE_BRIGHTNESS * 255 / 100);
+    const uint8_t brightness = (uint8_t)(s_brightness * 255 / 100);
     reg(0xFE, (const uint8_t[]){0x00}, 1);  // user command page
     reg(0xC4, (const uint8_t[]){0x80}, 1);  // QSPI interface
     reg(0x3A, (const uint8_t[]){0x55}, 1);  // 16-bit colour
@@ -58,6 +59,24 @@ static void keeper_task(void *arg)
             bsp_display_unlock();
         }
     }
+}
+
+void panel_brightness(int percent)
+{
+    percent = percent < 1 ? 1 : percent > 100 ? 100 : percent;
+    if (percent == s_brightness) {
+        return;
+    }
+    s_brightness = percent;
+    if (bsp_display_lock(200)) {
+        if (s_io) {
+            const uint8_t level = (uint8_t)(percent * 255 / 100);
+            reg(0x51, &level, 1);
+        } else {
+            bsp_display_brightness_set(percent);
+        }
+        bsp_display_unlock();
+    }  // otherwise the keeper task applies it within a few seconds
 }
 
 void panel_guard_start(void)

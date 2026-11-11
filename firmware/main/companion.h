@@ -33,8 +33,10 @@ void companion_start(void);
 
 bool companion_connected(void);
 
-// For the behaviour task: the next one-off event, if any.
+// For the behaviour task: the next one-off event, if any, and whether one is
+// waiting.
 bool companion_next_event(companion_event_t *out);
+bool companion_event_waiting(void);
 
 // The caption for the current mood (g_muse.claude_mood).
 void companion_mood_caption(char *buf, size_t len);

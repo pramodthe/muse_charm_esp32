@@ -101,6 +101,38 @@ menu "Muse charm"
             default y
     endmenu
 
+    menu "Camera and idle life"
+        config MUSE_ZOOM_CLOSE_X100
+            int "Close-up zoom while Muse talks (%)"
+            range 110 180
+            default 145
+            help
+                How close the camera comes for a conversation. 145 fills the
+                screen with Muse's head and shoulders. The body picture is
+                enlarged on the board, so it gets softer the closer you go;
+                the face is drawn live and stays sharp.
+
+        config MUSE_FIDGETS
+            bool "Fidget now and then when nothing is happening"
+            default y
+            help
+                A peek right up to the glass, a look around, a wiggle or a
+                stretch, every half minute or so. Silent.
+
+        config MUSE_SLEEP_AFTER_S
+            int "Doze off after this many quiet seconds (0: never)"
+            range 0 3600
+            default 180
+            help
+                Muse closes its eyes and the screen dims. Touching it, picking
+                it up, pressing BOOT or anything from Claude Code wakes it.
+
+        config MUSE_SLEEP_BRIGHTNESS
+            int "Display brightness while asleep (%)"
+            range 2 100
+            default 20
+    endmenu
+
     config MUSE_DEBUG_LOG
         bool "Log microphone and motion readings"
         default n

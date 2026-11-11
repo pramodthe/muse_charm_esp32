@@ -310,6 +310,11 @@ bool companion_next_event(companion_event_t *out)
     return s_events && xQueueReceive(s_events, out, 0) == pdTRUE;
 }
 
+bool companion_event_waiting(void)
+{
+    return s_events && uxQueueMessagesWaiting(s_events) > 0;
+}
+
 static bool ws_send(bool text, const void *data, size_t len)
 {
     if (!s_ws_lock || !s_connected) {

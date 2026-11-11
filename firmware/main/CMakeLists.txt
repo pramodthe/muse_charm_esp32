@@ -15,6 +15,8 @@ idf_component_register(
         "setup_ui.c"
         "companion.c"
         "panel.c"
+        "camera.c"
+        "zoom.c"
     INCLUDE_DIRS "."
 )
 

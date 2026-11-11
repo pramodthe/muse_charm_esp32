@@ -2,18 +2,23 @@
 // Body clips: the packed frame table, JPEG decoding and the on-screen canvas.
 //
 // Frames are decoded into one of two PSRAM RGB565 buffers while LVGL shows
-// the other, the same path the board's stock Video app uses.
+// the other, the same path the board's stock Video app uses. When the camera
+// is zoomed in (camera.c), the frame is decoded into a third buffer and
+// enlarged from there (zoom.c).
 
 #include "clips.h"
 
 #include <string.h>
 
 #include "bsp/esp-bsp.h"
+#include "camera.h"
 #include "esp_heap_caps.h"
 #include "esp_jpeg_dec.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "face.h"
 #include "muse.h"
+#include "zoom.h"
 
 static const char *TAG = "clips";
 
@@ -28,6 +33,8 @@ static const uint8_t *s_jpeg_data;
 
 static jpeg_dec_handle_t s_jpeg;
 static uint8_t *s_buf[2];
+static uint8_t *s_stage;       // the decoded frame, before the camera enlarges it
+static int s_stage_frame = -1;  // which frame s_stage holds
 static size_t s_buf_size;
 static int s_front;
 static lv_obj_t *s_canvas;
@@ -83,6 +90,27 @@ bool clips_init(void)
             return false;
         }
     }
+    s_stage = heap_caps_aligned_calloc(16, 1, s_buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (s_stage == NULL) {
+        ESP_LOGE(TAG, "no PSRAM for the zoom buffer");
+        return false;
+    }
+
+    // The close shots frame the face where it rests in the idle clip.
+    const muse_clip_t *idle = clips_find("idle");
+    float face_x = s_hdr->width * 0.5f, face_y = s_hdr->height * 0.3f;
+    if (idle && idle->count > 0) {
+        float sum_x = 0, sum_y = 0;
+        for (int i = 0; i < idle->count; i++) {
+            const muse_anchor_t *a = &s_anchors[idle->first + i];
+            sum_x += (a->eye_l_x + a->eye_r_x) * 0.125f;
+            sum_y += (a->eye_l_y + a->eye_r_y) * 0.125f;
+        }
+        face_x = sum_x / idle->count;
+        face_y = sum_y / idle->count;
+    }
+    camera_init(s_hdr->width, s_hdr->height, face_x, face_y);
+
     s_front = 0;
     g_muse.frame = 0;
     return decode(0, s_buf[0]);
@@ -120,8 +148,29 @@ lv_obj_t *clips_create_canvas(lv_obj_t *parent)
 void clips_show(int frame)
 {
     const int back = s_front ? 0 : 1;
-    if (!decode(frame, s_buf[back])) {
-        return;
+    muse_view_t view;
+    if (!camera_step(&view)) {
+        if (!decode(frame, s_buf[back])) {
+            return;
+        }
+    } else {
+        static bool timed;
+        const int64_t t0 = esp_timer_get_time();
+        if (s_stage_frame != frame) {
+            s_stage_frame = -1;
+            if (!decode(frame, s_stage)) {
+                return;
+            }
+            s_stage_frame = frame;
+        }
+        const int64_t t1 = esp_timer_get_time();
+        zoom_rgb565((const uint16_t *)s_stage, (uint16_t *)s_buf[back], s_hdr->width, s_hdr->height, view.zoom,
+                    view.ox, view.oy);
+        if (!timed) {
+            timed = true;
+            ESP_LOGI(TAG, "first zoomed frame: decode %d ms, zoom %d ms", (int)((t1 - t0) / 1000),
+                     (int)((esp_timer_get_time() - t1) / 1000));
+        }
     }
     if (!bsp_display_lock(2000)) {
         ESP_LOGW(TAG, "display busy for 2 s, frame %d skipped", frame);
@@ -129,8 +178,18 @@ void clips_show(int frame)
         lv_canvas_set_buffer(s_canvas, s_buf[back], s_hdr->width, s_hdr->height, LV_COLOR_FORMAT_RGB565);
         lv_obj_invalidate(s_canvas);
         g_muse.frame = frame;
+        camera_publish(&view);
         face_apply();  // move the face with the body in the same refresh
         bsp_display_unlock();
     }
     s_front = back;
+}
+
+bool clips_refresh(void)
+{
+    if (!camera_changed()) {
+        return false;
+    }
+    clips_show(g_muse.frame);
+    return true;
 }

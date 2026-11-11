@@ -194,7 +194,7 @@ static void audio_task(void *arg)
     int16_t (*preroll)[CHUNK] = heap_caps_calloc(PREROLL_CHUNKS, sizeof(*preroll), MALLOC_CAP_SPIRAM);
     int preroll_next = 0;
     bool was_listening = false;
-    float noise = 0, env = 0;
+    float noise = 0, env = 0, mic_env = 0;
     int voiced_run = 0, chunks = 0;
     int64_t last_voice = 0, mute_until = 0;
 #ifdef CONFIG_MUSE_DEBUG_LOG
@@ -217,10 +217,17 @@ static void audio_task(void *arg)
                 }
             }
             agent_push_mic(mic, CHUNK);
-        } else if (preroll) {
-            memcpy(preroll[preroll_next], mic, sizeof(mic));
-            preroll_next = (preroll_next + 1) % PREROLL_CHUNKS;
+            // How loud you are, so Muse can lean in as you speak.
+            const float loud = muse_clampf((20.0f * log10f(chunk_rms(mic, CHUNK) + 1.0f) - 52.0f) / 26.0f, 0.0f, 1.0f);
+            mic_env += (loud - mic_env) * (loud > mic_env ? 0.4f : 0.08f);
+        } else {
+            mic_env *= 0.8f;
+            if (preroll) {
+                memcpy(preroll[preroll_next], mic, sizeof(mic));
+                preroll_next = (preroll_next + 1) % PREROLL_CHUNKS;
+            }
         }
+        g_muse.mic_level = mic_env;
         was_listening = listening;
 
         // Speaker: Muse's reply first, chirps otherwise.

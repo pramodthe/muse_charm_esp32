@@ -16,6 +16,7 @@ typedef enum {
     MUSE_EXPR_DIZZY = 3,      // spinning eyes, small round mouth
     MUSE_EXPR_TALK = 4,       // dot eyes, mouth follows the microphone level
     MUSE_EXPR_SURPRISED = 5,  // wide eyes, small round mouth
+    MUSE_EXPR_SLEEP = 6,      // closed eyes, small smile, "z z Z"
 } muse_expr_t;
 
 typedef enum {
@@ -30,9 +31,10 @@ typedef enum {
     MUSE_EV_LONG_PRESS,
     MUSE_EV_SWIPE_LEFT,
     MUSE_EV_SWIPE_RIGHT,
-    MUSE_EV_TALK,          // screen held still: start a voice chat turn
-    MUSE_EV_BUTTON,        // BOOT button pressed: squeeze
-    MUSE_EV_SETUP,         // BOOT button held 3 s: open the setup page
+    MUSE_EV_FACE,          // tap on the face: a boop
+    MUSE_EV_TALK,          // BOOT held with voice chat on: start a voice chat turn
+    MUSE_EV_BUTTON,        // BOOT pressed without voice chat: squeeze
+    MUSE_EV_SETUP,         // open setup (screen held 5 s, or BOOT 3 s without voice chat)
 } muse_event_t;
 
 // Voice chat progress (agent.c).
@@ -74,15 +76,20 @@ typedef struct {
     volatile bool blink_request;   // (behaviour, cleared by face)
 
     volatile bool touch_down;      // (touch)
-    volatile int touch_x;
+    volatile int touch_x;          // on the screen
     volatile int touch_y;
+    volatile int touch_fx;         // the same point in the body frame, through the camera
+    volatile int touch_fy;
+    volatile bool petting;         // the finger is stroking Muse's head (touch)
 
     volatile float tilt_deg;       // + means Muse should lean clockwise (motion)
     volatile float downhill;       // -1..1, which side of the screen is lower (motion)
     volatile bool shake;           // set by motion, cleared by behaviour
+    volatile bool moved;           // picked up or moved; set by motion, cleared by behaviour
 
     volatile bool voice_active;    // (audio)
     volatile float mouth_level;    // 0..1, from the voice or Muse's own reply (audio)
+    volatile float mic_level;      // 0..1, how loud you are while Muse listens (audio)
     volatile bool button_down;     // BOOT button (touch)
 
     volatile int agent_state;      // muse_agent_state_t (agent)

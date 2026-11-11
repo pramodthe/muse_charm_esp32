@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-// QMI8658 motion sensor: tilt angle and shake detection.
+// QMI8658 motion sensor: tilt angle, shake detection, and noticing when the
+// board is picked up or moved.
 
 #include "motion.h"
 
@@ -21,6 +22,8 @@ static const char *TAG = "motion";
 #define GRAVITY_SMOOTHING 0.12f
 #define SHAKE_SAMPLES 6      // samples above the threshold within ~1 s
 #define SHAKE_COOLDOWN_MS 4000
+#define MOVE_JOLT 1.2f       // m/s^2 away from rest, twice within a second: handled
+#define MOVE_TURN 1.5f       // m/s^2 change in gravity's direction (about 9 degrees): turned
 #define QMI8658_REG_RESET 0x60
 #define QMI8658_CMD_RESET 0xB0
 
@@ -75,8 +78,9 @@ static void motion_task(void *arg)
 
     const float shake_threshold = CONFIG_MUSE_SHAKE_THRESHOLD_X10 / 10.0f;
     float gx = 0, gy = 0, gz = 0;  // smoothed gravity
+    float rx = 0, ry = 0, rz = 0;  // gravity where the board last rested
     bool primed = false;
-    int over = 0, window = 0;
+    int over = 0, window = 0, bumps = 0;
     int64_t cooldown_until = 0;
 #ifdef CONFIG_MUSE_DEBUG_LOG
     int64_t next_log = muse_now_ms() + 2000;
@@ -88,9 +92,9 @@ static void motion_task(void *arg)
             continue;
         }
         if (!primed) {
-            gx = ax;
-            gy = ay;
-            gz = az;
+            gx = rx = ax;
+            gy = ry = ay;
+            gz = rz = az;
             primed = true;
         }
 
@@ -104,9 +108,22 @@ static void motion_task(void *arg)
         if (jolt > shake_threshold) {
             over++;
         }
+        if (jolt > MOVE_JOLT) {
+            bumps++;
+        }
+        // Picked up or moved: handled, or gravity points somewhere new.
+        const float tx = gx - rx, ty = gy - ry, tz = gz - rz;
+        if (bumps >= 2 || tx * tx + ty * ty + tz * tz > MOVE_TURN * MOVE_TURN) {
+            g_muse.moved = true;
+            bumps = 0;
+            rx = gx;
+            ry = gy;
+            rz = gz;
+        }
         if (++window >= 1000 / POLL_MS) {
             window = 0;
             over = 0;
+            bumps = 0;
         }
         if (over >= SHAKE_SAMPLES && now > cooldown_until) {
             g_muse.shake = true;

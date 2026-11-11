@@ -1,13 +1,20 @@
 // SPDX-License-Identifier: MIT
-// Behaviour: decides which clip plays and how the face looks.
+// Behaviour: decides which clip plays, how the face looks and where the
+// camera is.
 //
-//   idle            breathing loop, blinks and glances
-//   tap             wave + "hi!"
-//   tap the belly   giggle
+//   idle            breathing loop, blinks and glances; now and then a fidget
+//                   (a peek right up to the glass, a look around, a wiggle)
+//   quiet minutes   dozes off: eyes closed, "z z Z", screen dimmed; wakes when
+//                   touched, picked up, spoken to or when Claude Code needs it
+//   picked up       looks at you, pleased
+//   tap             wave + "hi!"; on the belly a giggle; on the face a boop
+//   stroke the head petting: happy eyes, a purr, the head leans into your hand
 //   hold the screen squeeze while held, then cheer; 5 s opens setup
-//   hold BOOT       voice chat: listens while held, thinks, then answers with
-//                   the body swaying and subtitles underneath (a squeeze
-//                   instead when voice chat is not available; 3 s opens setup)
+//   hold BOOT       voice chat: comes close and listens while held, thinks,
+//                   then answers in close-up with the body swaying and
+//                   subtitles underneath, stepping back for gestures (a
+//                   squeeze instead when voice chat is not available; 3 s
+//                   opens setup)
 //   swipe           brushed aside, glances that way
 //   tilt            leans against the tilt to stay upright
 //   shake           dizzy (interrupts anything)
@@ -16,7 +23,7 @@
 // Claude Code companion (companion.c), with a caption under Muse:
 //   thinking        glances up and aside
 //   working         reads the caption, left to right
-//   needs you       waves for attention (up to three times)
+//   needs you       comes up to the glass and waves (up to three times)
 //   hello / bye     waves;  done: cheers;  a tool failed: a puzzled look;
 //   the turn failed: a head shake;  tidying memory: squeezes
 
@@ -26,13 +33,16 @@
 
 #include "agent.h"
 #include "audio.h"
+#include "camera.h"
 #include "clips.h"
 #include "companion.h"
 #include "esp_log.h"
+#include "esp_random.h"
 #include "face.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "panel.h"
 #include "setup_ui.h"
 #include "wifi.h"
 
@@ -53,6 +63,27 @@ static const char *TAG = "behavior";
 #define CHAT_MAX_MS 120000
 #define NUDGE_EVERY_MS 45000
 #define NUDGE_TIMES 3
+#define LEAN_IN 0.05f            // how much closer Muse leans while you speak
+#define PET_MAX_MS 30000
+#define PET_PURR_EVERY_MS 900
+#define PICKUP_REST_MS 20000     // still this long before a pick-up gets a greeting
+#define FIDGET_MIN_MS 22000      // a fidget every 22-52 s while nothing happens
+#define FIDGET_SPAN_MS 30000
+#define FIDGET_AFTER_ACTION_MS 12000
+#define SLEEP_FPS 5              // slow breathing
+
+#ifdef CONFIG_MUSE_FIDGETS
+#define FIDGETS 1
+#else
+#define FIDGETS 0
+#endif
+#ifdef CONFIG_MUSE_SLEEP_AFTER_S
+#define SLEEP_AFTER_MS (CONFIG_MUSE_SLEEP_AFTER_S * 1000)
+#define SLEEP_BRIGHTNESS CONFIG_MUSE_SLEEP_BRIGHTNESS
+#else
+#define SLEEP_AFTER_MS 180000
+#define SLEEP_BRIGHTNESS 20
+#endif
 
 #ifdef CONFIG_MUSE_COMPANION_SOUNDS
 #define COMPANION_SOUNDS 1
@@ -62,11 +93,24 @@ static const char *TAG = "behavior";
 
 static QueueHandle_t s_events;
 static int64_t s_caption_until_ms;  // an event's caption stays up until then
+static int64_t s_active_ms;         // when something last happened (for dozing off)
+static int64_t s_next_fidget_ms;
+static int s_idle_pos;              // where the breathing loop is
+static float s_home_x;              // where the face rests, in frame pixels
 static const muse_clip_t *s_idle, *s_wave, *s_giggle, *s_cheer, *s_lean, *s_dizzy, *s_listen, *s_squeeze;
 
 static void tick(TickType_t *wake, int fps)
 {
-    vTaskDelayUntil(wake, pdMS_TO_TICKS(1000 / (fps > 0 ? fps : 10)));
+    const TickType_t period = pdMS_TO_TICKS(1000 / (fps > 0 ? fps : 10));
+    const TickType_t now = xTaskGetTickCount();
+    if ((TickType_t)(now - *wake) >= period) {
+        // Running late (a heavy frame): don't race to catch up afterwards, but
+        // do let other tasks in.
+        *wake = now;
+        vTaskDelay(1);
+        return;
+    }
+    vTaskDelayUntil(wake, period);
 }
 
 // Play clip frames from..to (inclusive, either direction) at fps, or the
@@ -98,18 +142,66 @@ static void look(int mode, float x, float y)
     g_muse.gaze_mode = mode;
 }
 
-static void settle(void)
+// Back to the resting look and the wide shot.
+static void rest(void)
 {
     g_muse.expr_override = -1;
     look(MUSE_GAZE_AUTO, 0, 0);
-    xQueueReset(s_events);  // drop taps made during a reaction
+    camera_lean(0);
+    camera_shot(MUSE_SHOT_WIDE, 450);
 }
 
-// Wait while cond() holds, up to max_ms or until a shake.
+static void settle(void)
+{
+    rest();
+    xQueueReset(s_events);  // drop taps made during a reaction
+    s_idle_pos = 0;
+}
+
+// Something happened: Muse stays awake, and holds off fidgeting for a bit.
+static void active(void)
+{
+    s_active_ms = muse_now_ms();
+    if (s_next_fidget_ms < s_active_ms + FIDGET_AFTER_ACTION_MS) {
+        s_next_fidget_ms = s_active_ms + FIDGET_AFTER_ACTION_MS + esp_random() % FIDGET_SPAN_MS;
+    }
+}
+
+// Someone wants Muse's attention: idle business should step aside.
+static bool busy(void)
+{
+    return g_muse.touch_down || g_muse.button_down || g_muse.shake || g_muse.setup_request ||
+           uxQueueMessagesWaiting(s_events) > 0 || companion_event_waiting();
+}
+
+// One frame of the breathing loop.
+static void breathe(TickType_t *wake, int fps)
+{
+    clips_show(s_idle->first + s_idle_pos);
+    s_idle_pos = (s_idle_pos + 1) % s_idle->count;
+    tick(wake, fps ? fps : s_idle->fps);
+}
+
+// Breathe for a while. Returns false if stop() (when given) or a shake cut it short.
+static bool breathe_for(int ms, bool (*stop)(void), TickType_t *wake)
+{
+    const int64_t until = muse_now_ms() + ms;
+    while (muse_now_ms() < until) {
+        if (g_muse.shake || (stop && stop())) {
+            return false;
+        }
+        breathe(wake, 0);
+    }
+    return true;
+}
+
+// Wait while cond() holds, up to max_ms or until a shake, keeping the pose
+// (and following the camera if it is still moving).
 static void hold_while(bool (*cond)(void), int max_ms, TickType_t *wake)
 {
     const int64_t until = muse_now_ms() + max_ms;
     while (cond() && muse_now_ms() < until && !g_muse.shake) {
+        clips_refresh();
         vTaskDelay(pdMS_TO_TICKS(30));
     }
     *wake = xTaskGetTickCount();
@@ -239,10 +331,12 @@ static void lean_toward(int *lean, int target)
     clips_show(s_lean->first + *lean);
 }
 
-// Voice chat: listen while BOOT is held, think, then answer. While Muse talks
-// the whole body talks: the mouth follows the reply, the body sways a little
-// on each syllable, gestures land a moment into the reply, and the words run
-// underneath as subtitles. Holding BOOT again interrupts.
+// Voice chat: listen while BOOT is held, think, then answer. The camera
+// directs it like a scene: Muse comes close and tilts its head to listen,
+// leaning in a little as you speak; it answers in close-up, the mouth
+// following the words and the body swaying on each syllable, with subtitles
+// underneath; it steps back for a gesture so the arms are in view, and pulls
+// back to the wide shot at the end. Holding BOOT again interrupts.
 static void react_talk(TickType_t *wake)
 {
     const int mid = s_lean->count / 2;
@@ -254,10 +348,20 @@ static void react_talk(TickType_t *wake)
         }
         audio_play(MUSE_SOUND_LISTEN);
         talk_caption();
+        camera_shot(MUSE_SHOT_CLOSE, 450);
         g_muse.expr_override = MUSE_EXPR_NORMAL;
-        look(MUSE_GAZE_TARGET, 0.0f, -0.6f);
-        play_all(s_listen, wake);  // tilt the head to listen
-        hold_while(talking_to_muse, TALK_HOLD_MAX_MS, wake);
+        look(MUSE_GAZE_TARGET, 0.0f, -0.15f);  // at you
+        play_all(s_listen, wake);               // tilt the head to listen
+        float lean_in = 0;
+        const int64_t hold_until = muse_now_ms() + TALK_HOLD_MAX_MS;
+        while (talking_to_muse() && muse_now_ms() < hold_until && !g_muse.shake) {
+            lean_in += (g_muse.mic_level * LEAN_IN - lean_in) * 0.25f;
+            camera_lean(lean_in);
+            talk_caption();
+            clips_refresh();
+            vTaskDelay(pdMS_TO_TICKS(40));
+        }
+        *wake = xTaskGetTickCount();
         agent_end_turn();
         audio_play(MUSE_SOUND_THINK);
 
@@ -279,6 +383,8 @@ static void react_talk(TickType_t *wake)
                 break;
             }
             talk_caption();
+            lean_in *= 0.6f;
+            camera_lean(lean_in);
             const int64_t now = muse_now_ms();
             const int state = g_muse.agent_state;
             if (state == MUSE_AGENT_SPEAKING) {
@@ -291,8 +397,11 @@ static void react_talk(TickType_t *wake)
                 look(MUSE_GAZE_TARGET, 0, 0);
                 const int action = g_muse.agent_action;
                 if (action != MUSE_ACTION_NONE && now - speaking_since > 400) {
+                    // Step back so the gesture is in view, then come close again.
                     g_muse.agent_action = MUSE_ACTION_NONE;
+                    camera_shot(MUSE_SHOT_MEDIUM, 300);
                     play_action(action, wake);
+                    camera_shot(MUSE_SHOT_CLOSE, 400);
                     lean = mid;
                     continue;
                 }
@@ -319,13 +428,16 @@ static void react_talk(TickType_t *wake)
                        state == MUSE_AGENT_LISTENING) {
                 // Thinking: keep the head tilted and glance up and aside.
                 look(MUSE_GAZE_TARGET, (now / 1500) % 2 ? 0.5f : -0.7f, -0.8f);
+                clips_refresh();
                 tick(wake, 10);
             } else {
                 break;  // the reply has finished, or none came
             }
         }
+        camera_lean(0);
         if (!interrupted) {
-            // Settle: back to upright, a happy look, and let the last words linger.
+            // Settle: back to upright, a happy look as the camera pulls back,
+            // and let the last words linger.
             while (lean != mid) {
                 lean_toward(&lean, mid);
                 tick(wake, 14);
@@ -336,8 +448,10 @@ static void react_talk(TickType_t *wake)
             const int action = g_muse.agent_action;
             if (action != MUSE_ACTION_NONE) {
                 g_muse.agent_action = MUSE_ACTION_NONE;
+                camera_shot(MUSE_SHOT_MEDIUM, 300);
                 play_action(action, wake);
             }
+            camera_shot(MUSE_SHOT_WIDE, 700);
             if (!tilted || speaking_since) {
                 g_muse.expr_override = MUSE_EXPR_HAPPY;
                 for (int i = 0; i < 7; i++) {
@@ -350,6 +464,167 @@ static void react_talk(TickType_t *wake)
             return;
         }
     }
+}
+
+// ---------------------------------------------------------------- touch
+// A tap on the face: a startled "oh!", then a giggle, up close.
+static void react_boop(TickType_t *wake)
+{
+    camera_shot(MUSE_SHOT_CLOSE, 250);
+    audio_play(MUSE_SOUND_WHOOSH);
+    g_muse.expr_override = MUSE_EXPR_SURPRISED;
+    look(MUSE_GAZE_TARGET, 0, 0);
+    if (!breathe_for(450, NULL, wake)) {
+        return;
+    }
+    g_muse.blink_request = true;
+    g_muse.expr_override = MUSE_EXPR_HAPPY;
+    audio_play(MUSE_SOUND_GIGGLE);
+    play_all(s_giggle, wake);
+}
+
+// Stroking the head: happy eyes, a purr, and the head leans into your hand
+// for as long as the finger keeps moving there.
+static void react_pet(TickType_t *wake)
+{
+    const int mid = s_lean->count / 2;
+    int lean = mid;
+    int64_t next_purr = 0;
+    camera_shot(MUSE_SHOT_MEDIUM, 500);
+    g_muse.expr_override = MUSE_EXPR_HAPPY;
+    const int64_t until = muse_now_ms() + PET_MAX_MS;
+    while (g_muse.petting && muse_now_ms() < until && !g_muse.shake) {
+        const int64_t now = muse_now_ms();
+        if (now >= next_purr) {
+            audio_play(MUSE_SOUND_PURR);
+            next_purr = now + PET_PURR_EVERY_MS;
+        }
+        const float side = muse_clampf((g_muse.touch_fx - s_home_x) / 40.0f, -2.0f, 2.0f);
+        lean_toward(&lean, mid + (int)lroundf(side));
+        tick(wake, 12);
+    }
+    if (g_muse.shake) {
+        return;
+    }
+    // A contented moment, then back upright.
+    g_muse.blink_request = true;
+    audio_play(MUSE_SOUND_MMHM);
+    for (int i = 0; i < 6 || lean != mid; i++) {
+        lean_toward(&lean, mid);
+        tick(wake, 12);
+    }
+}
+
+// Picked up after resting: looks at you, pleased.
+static void react_pickup(TickType_t *wake)
+{
+    camera_shot(MUSE_SHOT_MEDIUM, 350);
+    look(MUSE_GAZE_TARGET, 0, 0);
+    g_muse.blink_request = true;
+    g_muse.expr_override = MUSE_EXPR_HAPPY;
+    breathe_for(1100, busy, wake);
+}
+
+// ---------------------------------------------------------------- idle life
+// Now and then Muse does something by itself, quietly.
+static void fidget(TickType_t *wake)
+{
+    const int mid = s_lean->count / 2;
+    const uint32_t r = esp_random() % 100;
+    if (r < 40) {
+        // Comes right up to the glass for a look at you.
+        camera_shot(MUSE_SHOT_PEEK, 600);
+        look(MUSE_GAZE_TARGET, 0, 0);
+        g_muse.expr_override = MUSE_EXPR_SURPRISED;
+        if (!breathe_for(800, busy, wake)) {
+            return;
+        }
+        g_muse.expr_override = MUSE_EXPR_NORMAL;
+        g_muse.blink_request = true;
+        if (!breathe_for(900, busy, wake)) {
+            return;
+        }
+        g_muse.blink_request = true;
+        breathe_for(700, busy, wake);
+    } else if (r < 75) {
+        // Looks around: one way, then the other.
+        const int side = (esp_random() & 1) ? 1 : -1;
+        int lean = mid;
+        for (int pass = 0; pass < 2; pass++) {
+            const int to = mid + (pass == 0 ? side : -side);
+            look(MUSE_GAZE_TARGET, pass == 0 ? side : -side, -0.1f);
+            for (int i = 0; i < 9; i++) {
+                if (busy()) {
+                    return;
+                }
+                lean_toward(&lean, to);
+                tick(wake, 10);
+            }
+        }
+        look(MUSE_GAZE_TARGET, 0, 0);
+        while (lean != mid) {
+            lean_toward(&lean, mid);
+            tick(wake, 10);
+        }
+    } else if (r < 90) {
+        // A happy wiggle.
+        g_muse.expr_override = MUSE_EXPR_HAPPY;
+        play_all(s_giggle, wake);
+    } else {
+        // A stretch.
+        if (play_all(s_squeeze, wake)) {
+            play(s_squeeze, s_squeeze->count - 1, 0, 0, wake);
+        }
+    }
+}
+
+static bool waking(void)
+{
+    return busy() || g_muse.moved || g_muse.voice_active || g_muse.claude_mood >= MUSE_MOOD_THINKING;
+}
+
+// After a quiet while Muse dozes off: heavy eyelids, then eyes closed, slow
+// breathing and "z z Z", a step closer, the screen dimmed. Touching it,
+// picking it up, pressing BOOT or anything from Claude Code wakes it.
+static void doze(TickType_t *wake)
+{
+    face_set_caption("");
+    look(MUSE_GAZE_TARGET, 0, 0.6f);
+    g_muse.blink_request = true;
+    if (!breathe_for(900, waking, wake)) {
+        return;
+    }
+    g_muse.blink_request = true;
+    if (!breathe_for(700, waking, wake)) {
+        return;
+    }
+    ESP_LOGI(TAG, "dozing off");
+    g_muse.expr_override = MUSE_EXPR_SLEEP;
+    camera_shot(MUSE_SHOT_MEDIUM, 2500);
+    int level = CONFIG_MUSE_BRIGHTNESS;
+    while (!waking()) {
+        if (level > SLEEP_BRIGHTNESS) {
+            level = level - 4 > SLEEP_BRIGHTNESS ? level - 4 : SLEEP_BRIGHTNESS;
+            panel_brightness(level);
+        }
+        breathe(wake, SLEEP_FPS);
+    }
+    ESP_LOGI(TAG, "awake");
+    panel_brightness(CONFIG_MUSE_BRIGHTNESS);
+    g_muse.moved = false;
+    muse_event_t next;
+    if (g_muse.shake || (xQueuePeek(s_events, &next, 0) == pdTRUE && next == MUSE_EV_TALK)) {
+        g_muse.expr_override = MUSE_EXPR_NORMAL;
+        return;  // straight to it
+    }
+    // Wide-eyed for a moment, a blink, "mm?".
+    g_muse.expr_override = MUSE_EXPR_SURPRISED;
+    look(MUSE_GAZE_TARGET, 0, 0);
+    audio_play(MUSE_SOUND_LISTEN);
+    breathe_for(400, NULL, wake);
+    g_muse.expr_override = MUSE_EXPR_NORMAL;
+    g_muse.blink_request = true;
+    breathe_for(300, NULL, wake);
 }
 
 // ---------------------------------------------------------------- Claude Code companion
@@ -400,15 +675,21 @@ static void react_claude(const companion_event_t *e, TickType_t *wake)
     s_caption_until_ms = muse_now_ms() + linger_ms;
 }
 
-// Claude is waiting for your permission: wave to get your attention.
+// Claude is waiting for your permission: come right up to the glass, then
+// step back and wave to get your attention.
 static void react_nudge(TickType_t *wake)
 {
     char caption[COMPANION_CAPTION_LEN];
     companion_mood_caption(caption, sizeof(caption));
     face_set_caption(caption);
     chirp(MUSE_SOUND_WHOOSH);
+    camera_shot(MUSE_SHOT_PEEK, 350);
     g_muse.expr_override = MUSE_EXPR_SURPRISED;
     look(MUSE_GAZE_TARGET, 0, 0);
+    if (!breathe_for(900, NULL, wake)) {
+        return;
+    }
+    camera_shot(MUSE_SHOT_MEDIUM, 350);
     play_all(s_wave, wake);
 }
 
@@ -452,12 +733,17 @@ static void react(muse_event_t ev, TickType_t *wake)
 {
     switch (ev) {
     case MUSE_EV_TAP:
+        camera_shot(MUSE_SHOT_MEDIUM, 300);  // a step toward you
         audio_play(MUSE_SOUND_HELLO);
         play_all(s_wave, wake);
         break;
     case MUSE_EV_BELLY:
+        camera_shot(MUSE_SHOT_MEDIUM, 300);
         audio_play(MUSE_SOUND_GIGGLE);
         play_all(s_giggle, wake);
+        break;
+    case MUSE_EV_FACE:
+        react_boop(wake);
         break;
     case MUSE_EV_LONG_PRESS:
         react_squeeze(wake);
@@ -486,10 +772,10 @@ static void behavior_task(void *arg)
     audio_play(MUSE_SOUND_HELLO);  // say hello on power-up
     play_all(s_wave, &wake);
     settle();
+    active();
 
     const int lean_mid = s_lean->count / 2;
     int lean = lean_mid;
-    int idle = 0;
     bool leaning = false;
     int last_mood = MUSE_MOOD_OFF, nudges = 0;
     int64_t next_nudge_ms = 0;
@@ -501,25 +787,34 @@ static void behavior_task(void *arg)
         if (setup_ui_active()) {
             vTaskDelay(pdMS_TO_TICKS(100));  // the setup screens are up
             wake = xTaskGetTickCount();
+            active();
             continue;
         }
         if (g_muse.shake) {
             react_dizzy(&wake);
+            g_muse.moved = false;
             settle();
+            active();
+            continue;
+        }
+        if (g_muse.petting) {
+            react_pet(&wake);
+            settle();
+            active();
             continue;
         }
         muse_event_t ev;
         if (xQueueReceive(s_events, &ev, 0) == pdTRUE) {
             react(ev, &wake);
             settle();
-            idle = 0;
+            active();
             continue;
         }
         companion_event_t claude;
         if (companion_next_event(&claude)) {
             react_claude(&claude, &wake);
             settle();
-            idle = 0;
+            active();
             continue;
         }
         const int mood = g_muse.claude_mood;
@@ -534,7 +829,7 @@ static void behavior_task(void *arg)
                 nudges++;
                 next_nudge_ms = muse_now_ms() + NUDGE_EVERY_MS;
                 settle();
-                idle = 0;
+                active();
                 continue;
             }
         }
@@ -543,7 +838,23 @@ static void behavior_task(void *arg)
         if (g_muse.voice_active && !g_muse.touch_down) {
             react_listen(&wake);
             settle();
+            active();
             continue;
+        }
+        if (g_muse.touch_down || g_muse.button_down || mood >= MUSE_MOOD_THINKING) {
+            active();
+        }
+
+        // Picked up or moved: Muse stays awake, and greets you if it had been resting.
+        if (g_muse.moved) {
+            g_muse.moved = false;
+            const bool was_resting = muse_now_ms() - s_active_ms > PICKUP_REST_MS;
+            active();
+            if (was_resting && !g_muse.touch_down) {
+                react_pickup(&wake);
+                rest();
+                continue;
+            }
         }
 
         // Tilt: show the lean pose for the angle, one step per tick so Muse
@@ -561,15 +872,35 @@ static void behavior_task(void *arg)
             if (lean != target || g_muse.frame != s_lean->first + lean) {
                 lean += (target > lean) - (target < lean);
                 clips_show(s_lean->first + lean);
+            } else {
+                clips_refresh();
             }
             tick(&wake, LEAN_FPS);
+            if (lean == lean_mid && !leaning) {
+                s_idle_pos = 0;
+            }
+            continue;
+        }
+
+        // Nothing is happening. After a quiet while Muse dozes off; before
+        // that, now and then, it fidgets.
+        const int64_t now = muse_now_ms();
+        const bool undisturbed = mood <= MUSE_MOOD_IDLE && !g_muse.touch_down && now >= s_caption_until_ms;
+        if (SLEEP_AFTER_MS > 0 && undisturbed && now - s_active_ms > SLEEP_AFTER_MS) {
+            doze(&wake);
+            rest();
+            active();
+            continue;
+        }
+        if (FIDGETS && undisturbed && now >= s_next_fidget_ms) {
+            fidget(&wake);
+            rest();
+            s_next_fidget_ms = muse_now_ms() + FIDGET_MIN_MS + esp_random() % FIDGET_SPAN_MS;
             continue;
         }
 
         follow_claude();
-        clips_show(s_idle->first + idle);
-        idle = (idle + 1) % s_idle->count;
-        tick(&wake, s_idle->fps);
+        breathe(&wake, 0);
     }
 }
 
@@ -587,6 +918,13 @@ bool behavior_init(void)
         ESP_LOGE(TAG, "the frame table is missing clips; re-export assets/ from Blender");
         return false;
     }
+    // Where the face rests: the middle of the eyes over the idle loop.
+    float sum = 0;
+    for (int i = 0; i < s_idle->count; i++) {
+        const muse_anchor_t *a = clips_anchor(s_idle->first + i);
+        sum += (a->eye_l_x + a->eye_r_x) * 0.125f;
+    }
+    s_home_x = sum / s_idle->count;
     s_events = xQueueCreate(8, sizeof(muse_event_t));
     return s_events != NULL;
 }

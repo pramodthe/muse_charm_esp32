@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0 (2026-11-11)
+
+- **A camera.** The body frames are one wide shot; the board now crops and enlarges them itself (a two-pass bilinear zoom, about 27 ms a frame) and eases between shots: wide, medium, close and a peek right up to the glass. The face is drawn live through the same view, so it stays sharp at any zoom, and touches are mapped back through it. No new artwork.
+- **Conversations in close-up.** Hold BOOT and Muse comes close and leans in as you speak; it answers in close-up, steps back for gestures and pulls back at the end. The caption sits on a dark pill so subtitles read over the body.
+- **Petting.** Stroke Muse's head: happy closed eyes, a purr, and the head leans into your finger. A tap on the face is a boop; taps bring Muse a step closer.
+- **Idle life.** Now and then Muse peeks at you up close, looks around, wiggles or stretches. Picked up after a rest, it looks at you, pleased.
+- **Sleep.** After 3 quiet minutes Muse dozes off: eyes closed, "z z Z", slow breathing, the screen dimmed to 20 %. Touch, pick-up, BOOT or Claude Code wakes it. While Claude Code needs you, Muse comes right up to the glass before it waves.
+- menuconfig: close-up zoom, fidgets on/off, doze-off time, sleep brightness. `tools/preview_face.py --shots` previews the camera's framing.
+- Frames that run late no longer play fast afterwards to catch up.
+
 ## 0.4.0 (2026-11-11)
 
 - **Companion server** (`companion/`, Python standard library only) on your computer. Muse finds it on the local network with a UDP beacon and keeps one websocket open to it.

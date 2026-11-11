@@ -4,6 +4,8 @@
 // While a finger is down its position is published in g_muse so the eyes can
 // follow it. Gestures become events for the behaviour task.
 //
+//   tap                 wave; on the belly a giggle; on the face a boop
+//   stroke the head     petting, for as long as the finger keeps moving there
 //   screen held still   squeeze; keep holding 5 s for setup
 //   BOOT held           talk to Muse (push to talk) when voice chat is on;
 //                       otherwise a squeeze, and 3 s opens setup
@@ -13,6 +15,7 @@
 #include <stdlib.h>
 
 #include "behavior.h"
+#include "camera.h"
 #include "clips.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
@@ -28,19 +31,59 @@
 #define TAP_MAX_MS 450
 #define TAP_MAX_MOVE_PX 24
 #define SWIPE_MIN_DX_PX 60
+#define PET_MIN_PATH_PX 90   // the finger has travelled this far on the head...
+#define PET_MIN_MS 300       // ...for at least this long (a quick flick is a swipe)
+// Regions, in body-frame pixels
 #define BELLY_RX_PX 75.0f
 #define BELLY_RY_PX 65.0f
+#define FACE_RX_PX 54.0f     // the face window
+#define FACE_RY_PX 46.0f
+#define HEAD_RX_PX 95.0f     // the whole hood
+#define HEAD_RY_PX 85.0f
+#define HEAD_ABOVE_EYES_PX 12.0f
 
 static int64_t s_press_ms;
 static int s_press_x, s_press_y, s_max_move;
-static bool s_long_fired, s_setup_fired;
+static int s_last_x, s_last_y, s_path;
+static bool s_long_fired, s_setup_fired, s_on_head, s_petting;
 
-static bool on_belly(int x, int y)
+// Publish the finger's position: on the screen, and in the body frame (the
+// camera may be zoomed in).
+static void publish(const lv_point_t *p, float *fx, float *fy)
+{
+    camera_to_frame(p->x, p->y, fx, fy);
+    g_muse.touch_x = p->x;
+    g_muse.touch_y = p->y;
+    g_muse.touch_fx = (int)*fx;
+    g_muse.touch_fy = (int)*fy;
+}
+
+static bool on_belly(float fx, float fy)
 {
     const muse_frames_header_t *hdr = clips_header();
-    const float bx = (x - (float)hdr->belly_x) / BELLY_RX_PX;
-    const float by = (y - (float)hdr->belly_y) / BELLY_RY_PX;
+    const float bx = (fx - (float)hdr->belly_x) / BELLY_RX_PX;
+    const float by = (fy - (float)hdr->belly_y) / BELLY_RY_PX;
     return bx * bx + by * by <= 1.0f;
+}
+
+// Inside an ellipse around the eyes of the frame on screen, `grow` times
+// (rx, ry), its centre `up` pixels above them.
+static bool near_eyes(float fx, float fy, float rx, float ry, float up, float grow)
+{
+    const muse_anchor_t *a = clips_anchor(g_muse.frame);
+    const float dx = (fx - (a->eye_l_x + a->eye_r_x) * 0.125f) / (rx * grow);
+    const float dy = (fy - ((a->eye_l_y + a->eye_r_y) * 0.125f - up)) / (ry * grow);
+    return dx * dx + dy * dy <= 1.0f;
+}
+
+static bool on_face(float fx, float fy)
+{
+    return near_eyes(fx, fy, FACE_RX_PX, FACE_RY_PX, -4.0f, 1.0f);
+}
+
+static bool on_head(float fx, float fy, float grow)
+{
+    return near_eyes(fx, fy, HEAD_RX_PX, HEAD_RY_PX, HEAD_ABOVE_EYES_PX, grow);
 }
 
 static void on_touch(lv_event_t *e)
@@ -52,27 +95,45 @@ static void on_touch(lv_event_t *e)
     lv_point_t p;
     lv_indev_get_point(indev, &p);
     const int64_t now = muse_now_ms();
+    float fx, fy;
+    publish(&p, &fx, &fy);
 
     switch (lv_event_get_code(e)) {
     case LV_EVENT_PRESSED:
         s_press_ms = now;
-        s_press_x = p.x;
-        s_press_y = p.y;
+        s_press_x = s_last_x = p.x;
+        s_press_y = s_last_y = p.y;
         s_max_move = 0;
+        s_path = 0;
         s_long_fired = false;
         s_setup_fired = false;
-        g_muse.touch_x = p.x;
-        g_muse.touch_y = p.y;
+        s_petting = false;
+        s_on_head = on_head(fx, fy, 1.0f);
         g_muse.touch_down = true;
         break;
 
     case LV_EVENT_PRESSING: {
-        g_muse.touch_x = p.x;
-        g_muse.touch_y = p.y;
         const int dx = abs(p.x - s_press_x), dy = abs(p.y - s_press_y);
         const int move = dx > dy ? dx : dy;
         if (move > s_max_move) {
             s_max_move = move;
+        }
+        // Petting: the finger keeps moving on the head.
+        const int step = abs(p.x - s_last_x) + abs(p.y - s_last_y);
+        if (step >= 4) {
+            s_path += step;
+            s_last_x = p.x;
+            s_last_y = p.y;
+        }
+        if (!s_petting && s_on_head && !s_long_fired && s_path >= PET_MIN_PATH_PX &&
+                now - s_press_ms >= PET_MIN_MS && on_head(fx, fy, 1.2f)) {
+            s_petting = true;
+            g_muse.petting = true;  // behaviour pets for as long as this stays set
+        } else if (s_petting) {
+            g_muse.petting = on_head(fx, fy, 1.5f);  // wandering off the head ends it
+        }
+        if (s_petting) {
+            break;
         }
         if (!s_long_fired && s_max_move < TAP_MAX_MOVE_PX && now - s_press_ms >= LONG_PRESS_MS) {
             s_long_fired = true;
@@ -89,14 +150,15 @@ static void on_touch(lv_event_t *e)
     case LV_EVENT_RELEASED:
     case LV_EVENT_PRESS_LOST: {
         g_muse.touch_down = false;
-        if (s_long_fired) {
-            break;  // the squeeze ends when behaviour sees the finger lift
+        g_muse.petting = false;
+        if (s_long_fired || s_petting) {
+            break;  // the squeeze or the petting ends when behaviour sees the finger lift
         }
         const int dx = p.x - s_press_x, dy = p.y - s_press_y;
         if (abs(dx) >= SWIPE_MIN_DX_PX && abs(dx) > abs(dy) * 3 / 2) {
             behavior_post(dx > 0 ? MUSE_EV_SWIPE_RIGHT : MUSE_EV_SWIPE_LEFT);
         } else if (s_max_move < TAP_MAX_MOVE_PX && now - s_press_ms <= TAP_MAX_MS) {
-            behavior_post(on_belly(p.x, p.y) ? MUSE_EV_BELLY : MUSE_EV_TAP);
+            behavior_post(on_face(fx, fy) ? MUSE_EV_FACE : on_belly(fx, fy) ? MUSE_EV_BELLY : MUSE_EV_TAP);
         }
         break;
     }

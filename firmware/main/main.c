@@ -6,6 +6,7 @@
 // at per-frame anchors exported from Blender. See README.md for the full tour.
 //
 //   clips.c     frame table, JPEG decoding, canvas
+//   camera.c    which part of the frame is on screen (zoom.c enlarges it)
 //   panel.c     sets the AMOLED panel up again if it turns off
 //   face.c      live eyes and mouth
 //   behavior.c  which clip plays, and why

@@ -9,3 +9,6 @@
 
 // Start the task. Call after bsp_display_start().
 void panel_guard_start(void);
+
+// Set the display brightness (percent). Safe from any task.
+void panel_brightness(int percent);

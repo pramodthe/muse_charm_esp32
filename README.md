@@ -2,11 +2,12 @@
 
 An interactive 3D mascot for the
 [Waveshare ESP32-S3-Touch-AMOLED-1.8](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.8).
-Muse lives on the little AMOLED screen: it waves when you tap it, giggles when you tap its belly,
+Muse lives on the little AMOLED screen: it waves when you tap it, purrs when you stroke its head,
 follows your finger with its eyes, leans against the tilt of the board and gets dizzy when shaken.
+Left alone it fidgets, comes up to the glass for a look at you, and after a while dozes off.
 
-Hold the side button and talk to it, and Muse answers out loud in its own small voice, swaying as
-it speaks with subtitles underneath. Next to your keyboard it doubles as a **Claude Code
+Hold the side button and talk to it, and Muse comes in close and answers out loud in its own small
+voice, swaying as it speaks with subtitles underneath. Next to your keyboard it doubles as a **Claude Code
 companion**: it glances up while Claude thinks, reads "Editing face.c" while Claude works, waves
 when Claude needs your OK and cheers when the reply is done.
 
@@ -28,17 +29,21 @@ when Claude needs your OK and cheers when the reply is done.
 
 | You | Muse |
 | --- | --- |
-| Hold the **BOOT** button and talk | Chirps "mm?", tilts its head and listens, hums while it thinks, then answers out loud with subtitles underneath. Press BOOT again to interrupt |
+| Hold the **BOOT** button and talk | Comes in close, chirps "mm?" and tilts its head, leaning in as you speak; hums while it thinks, then answers out loud in close-up with subtitles underneath. Press BOOT again to interrupt |
 | Drag a finger | Eyes follow your finger |
-| Tap | Waves and chirps "hi!" |
+| Stroke its head | Closes its eyes happily, purrs and leans its head into your finger |
+| Tap | Steps closer, waves and chirps "hi!" |
 | Tap the belly | Giggles |
+| Tap the face | A startled "oh!", then a giggle, up close |
 | Hold the screen | Squeezes up with `> <` eyes, cheers when you let go |
 | Hold the screen for 5 s | Opens setup |
 | Swipe left or right | Gets brushed aside and glances that way |
 | Tilt the board | Stays upright by leaning against the tilt, eyes look downhill |
 | Shake | Gets dizzy |
-| Use Claude Code | Shows what Claude is doing, waves when it needs you, cheers when it's done |
-| Nothing | Breathes, blinks and glances around |
+| Pick it up | Looks at you, pleased |
+| Use Claude Code | Shows what Claude is doing, comes up to the glass and waves when it needs you, cheers when it's done |
+| Nothing | Breathes, blinks and glances around; now and then peeks at you up close, looks around, wiggles or stretches |
+| Nothing for 3 minutes | Dozes off: eyes closed, "z z Z", the screen dimmed. Touch it, pick it up or press BOOT to wake it |
 
 While Muse answers, the AI can make it wave, giggle, cheer or go dizzy. Ask "what is Claude
 doing?" and it checks on your Claude Code sessions.
@@ -235,6 +240,10 @@ Firmware options are in `idf.py menuconfig` → **Muse charm**:
 | Claude Code companion / chirps | on / on | |
 | Voice chat through the companion | on | Voice, model and personality are set on the computer |
 | Companion server address | empty | Found automatically; set it on networks that block broadcasts |
+| Close-up zoom while Muse talks | 145 % | The body picture gets softer the closer you go; the face stays sharp |
+| Fidget when nothing is happening | on | Silent |
+| Doze off after | 180 s | 0 to never sleep |
+| Display brightness while asleep | 20 % | |
 | Log microphone and motion readings | off | Prints levels every few seconds, for tuning |
 
 ## How it works
@@ -252,9 +261,10 @@ Firmware options are in `idf.py menuconfig` → **Muse charm**:
    ▼
  ESP32-S3
    clips.c       decodes one JPEG per tick into PSRAM and swaps it onto an LVGL canvas (10 fps)
+   camera.c      which part of the frame is on screen, and how big (zoom.c enlarges it)
    face.c        draws the eyes, mouth and caption live at each frame's anchors (30 fps)
-   behavior.c    picks the clip and the expression: idle, wave, giggle, cheer, lean, dizzy,
-                 listen, squeeze, talking
+   behavior.c    picks the clip, the expression and the camera shot: idle, wave, giggle, cheer,
+                 lean, dizzy, listen, squeeze, talking, petting, fidgets, sleep
    touch.c / motion.c / audio.c   gestures and BOOT, tilt and shake, microphone, speaker, chirps
    companion.c   the link to the companion server; agent.c streams voice chat over it
 ```
@@ -264,6 +274,14 @@ The face is small, so redrawing only the eyes and mouth runs at 30 fps. That is 
 track a finger smoothly and blink, and it lets one set of body frames carry every expression.
 Each clip frame carries the eye and mouth positions, the face roll and a suggested expression,
 which the firmware can override, for example to move the mouth with Muse's voice.
+
+**The camera.** All the body frames are one wide shot. To come closer, `camera.c` picks a part of
+the decoded frame and `zoom.c` enlarges it to the full screen with a two-pass bilinear filter
+(about 27 ms a frame on the ESP32-S3, on top of 18 ms for the JPEG). Behaviour chooses a shot (wide,
+medium for gestures, close for talking, a peek right at the glass) and the camera eases to it.
+Because the face is drawn live, it is laid out through the same view at the new size, so in a
+close-up the body is an enlarged picture but the eyes and mouth stay sharp. Touches are mapped
+back through the view, so a tap on the belly is a tap on the belly at any zoom.
 
 Voice chat streams 16 kHz audio both ways over the same websocket as the Claude Code moods. The
 server sends the reply a couple of seconds ahead of playback, and each sentence's subtitle just
@@ -278,10 +296,12 @@ firmware/              ESP-IDF project
   main/
     main.c             start-up
     clips.c/.h         frame table, JPEG decoding, canvas
+    camera.c/.h        shots and easing: what part of the frame is on screen
+    zoom.c/.h          bilinear zoom for RGB565 frames
     face.c/.h          live eyes, mouth and caption
     behavior.c/.h      reactions and the idle loop
-    touch.c/.h         drag, tap, belly tap, long press, swipe, BOOT
-    motion.c/.h        QMI8658 tilt and shake
+    touch.c/.h         drag, taps, petting, long press, swipe, BOOT
+    motion.c/.h        QMI8658 tilt, shake and pick-up
     audio.c/.h         ES8311 microphone and speaker
     sounds.c/.h        the chirps
     agent.c/.h         voice chat, relayed by the companion server
@@ -326,6 +346,7 @@ Check the result without flashing:
 pip install pillow
 python3 tools/preview_face.py            # every clip → build/preview/muse_all.gif
 python3 tools/preview_face.py --sheet    # expression sheet
+python3 tools/preview_face.py --shots    # the camera's shots, as the board frames them
 ```
 
 Then rebuild the firmware. To add a clip, add its function to `CLIPS` in the export script and
@@ -351,6 +372,8 @@ the scene, because the anchors are taken from them.
   often, try another USB cable or port.
 - **Muse stays on "Thinking..." after you interrupt Claude:** interrupted turns send no "done"
   event, so the mood clears by itself after five minutes, or at your next prompt.
+- **Muse dozes off too soon, or you'd rather it never slept:** change *Doze off after* in
+  menuconfig (0 turns sleep off). Typing on the same desk or moving the board keeps it awake.
 - **Muse leans the wrong way when tilted:** turn on *Invert the lean direction* in menuconfig.
 - **Muse doesn't react to your voice, or reacts to noise:** turn on *Log microphone and motion
   readings* and compare the `mic rms` level while talking with the `room noise` level, then adjust

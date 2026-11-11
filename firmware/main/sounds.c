@@ -62,6 +62,11 @@ static const muse_note_t THINK[] = {
     END,
 };
 
+static const muse_note_t PURR[] = {
+    {340, 372, 420, 42, 23, 44},
+    END,
+};
+
 const muse_note_t *const muse_sounds[MUSE_SOUND_COUNT] = {
     [MUSE_SOUND_HELLO] = HELLO,
     [MUSE_SOUND_GIGGLE] = GIGGLE,
@@ -72,4 +77,5 @@ const muse_note_t *const muse_sounds[MUSE_SOUND_COUNT] = {
     [MUSE_SOUND_MMHM] = MMHM,
     [MUSE_SOUND_LISTEN] = LISTEN,
     [MUSE_SOUND_THINK] = THINK,
+    [MUSE_SOUND_PURR] = PURR,
 };
