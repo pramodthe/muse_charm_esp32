@@ -173,11 +173,19 @@ static void active(void)
     }
 }
 
+// Muse has something to say without being asked (a timer is up, the battery
+// is low, good morning): the server has started a reply that no turn asked for.
+static bool speaking_up(void)
+{
+    const int state = g_muse.agent_state;
+    return state == MUSE_AGENT_SPEAKING || state == MUSE_AGENT_THINKING;
+}
+
 // Someone wants Muse's attention: idle business should step aside.
 static bool busy(void)
 {
     return g_muse.touch_down || g_muse.button_down || g_muse.shake || g_muse.setup_request ||
-           uxQueueMessagesWaiting(s_events) > 0 || companion_event_waiting();
+           uxQueueMessagesWaiting(s_events) > 0 || companion_event_waiting() || speaking_up();
 }
 
 // One frame of the breathing loop.
@@ -453,7 +461,11 @@ static bool perform(int move, TickType_t *wake)
 // back to the wide shot at the end. While it thinks, a thought cloud hangs
 // over its head. The AI can move the body with its tools (perform() above).
 // Holding BOOT again interrupts.
-static void react_talk(TickType_t *wake)
+//
+// `asked` is false when Muse speaks first (a timer, a low battery, good
+// morning): there is nothing to listen to, so it comes close and says it.
+// Holding BOOT then answers it like any other turn.
+static void react_talk(TickType_t *wake, bool asked)
 {
     const int mid = s_lean->count / 2;
     for (;;) {
@@ -461,30 +473,39 @@ static void react_talk(TickType_t *wake)
         s_emote_until_ms = 0;
         s_sleep_asked = false;
         g_muse.thought = false;
-        if (!agent_begin_turn()) {
-            react_error(wake);
-            return;
-        }
-        audio_play(MUSE_SOUND_LISTEN);
-        talk_caption();
-        camera_shot(MUSE_SHOT_CLOSE, 450);
-        g_muse.expr_override = MUSE_EXPR_NORMAL;
-        look(MUSE_GAZE_TARGET, 0.0f, -0.15f);  // at you
-        play_all(s_listen, wake);               // tilt the head to listen
         float lean_in = 0;
-        const int64_t hold_until = muse_now_ms() + TALK_HOLD_MAX_MS;
-        while (talking_to_muse() && muse_now_ms() < hold_until && !g_muse.shake) {
-            lean_in += (g_muse.mic_level * LEAN_IN - lean_in) * 0.25f;
-            camera_lean(lean_in);
+        if (asked) {
+            if (!agent_begin_turn()) {
+                react_error(wake);
+                return;
+            }
+            audio_play(MUSE_SOUND_LISTEN);
             talk_caption();
-            clips_refresh();
-            vTaskDelay(pdMS_TO_TICKS(40));
+            camera_shot(MUSE_SHOT_CLOSE, 450);
+            g_muse.expr_override = MUSE_EXPR_NORMAL;
+            look(MUSE_GAZE_TARGET, 0.0f, -0.15f);  // at you
+            play_all(s_listen, wake);               // tilt the head to listen
+            const int64_t hold_until = muse_now_ms() + TALK_HOLD_MAX_MS;
+            while (talking_to_muse() && muse_now_ms() < hold_until && !g_muse.shake) {
+                lean_in += (g_muse.mic_level * LEAN_IN - lean_in) * 0.25f;
+                camera_lean(lean_in);
+                talk_caption();
+                clips_refresh();
+                vTaskDelay(pdMS_TO_TICKS(40));
+            }
+            *wake = xTaskGetTickCount();
+            agent_end_turn();
+            audio_play(MUSE_SOUND_THINK);
+        } else {
+            ESP_LOGI(TAG, "speaking first");
+            talk_caption();
+            camera_shot(MUSE_SHOT_CLOSE, 450);
+            g_muse.expr_override = MUSE_EXPR_NORMAL;
+            look(MUSE_GAZE_TARGET, 0, 0);
         }
-        *wake = xTaskGetTickCount();
-        agent_end_turn();
-        audio_play(MUSE_SOUND_THINK);
 
-        bool tilted = true, interrupted = false;
+        bool tilted = asked, interrupted = false;
+        asked = true;  // from here on, BOOT starts an ordinary turn
         int lean = mid, sway = 1;
         float last_level = 0;
         int64_t speaking_since = 0, quiet_since = 0, move_wait_since = 0, moved_at = 0;
@@ -510,6 +531,8 @@ static void react_talk(TickType_t *wake)
                 if (tilted) {
                     play(s_listen, s_listen->count - 1, 0, 0, wake);
                     tilted = false;
+                }
+                if (!speaking_since) {
                     speaking_since = now;
                 }
                 g_muse.thought = false;
@@ -752,9 +775,12 @@ static void doze(TickType_t *wake)
     }
     ESP_LOGI(TAG, "awake");
     panel_brightness(panel_awake_brightness());
+    if (g_muse.touch_down || g_muse.moved) {
+        companion_report_awake();  // someone is here
+    }
     g_muse.moved = false;
     muse_event_t next;
-    if (g_muse.shake || (xQueuePeek(s_events, &next, 0) == pdTRUE && next == MUSE_EV_TALK)) {
+    if (g_muse.shake || speaking_up() || (xQueuePeek(s_events, &next, 0) == pdTRUE && next == MUSE_EV_TALK)) {
         g_muse.expr_override = MUSE_EXPR_NORMAL;
         return;  // straight to it
     }
@@ -907,7 +933,7 @@ static void react(muse_event_t ev, TickType_t *wake)
         react_swipe(ev == MUSE_EV_SWIPE_RIGHT, wake);
         break;
     case MUSE_EV_TALK:
-        react_talk(wake);
+        react_talk(wake, true);
         break;
     case MUSE_EV_BUTTON:
         react_squeeze(wake);
@@ -974,6 +1000,12 @@ static void behavior_task(void *arg)
             active();
             continue;
         }
+        if (speaking_up()) {
+            react_talk(&wake, false);  // Muse has something to say
+            settle();
+            active();
+            continue;
+        }
         companion_event_t claude;
         if (companion_next_event(&claude)) {
             react_claude(&claude, &wake);
@@ -1015,6 +1047,7 @@ static void behavior_task(void *arg)
             const bool was_resting = muse_now_ms() - s_active_ms > PICKUP_REST_MS;
             active();
             if (was_resting && !g_muse.touch_down) {
+                companion_report_awake();
                 react_pickup(&wake);
                 rest();
                 continue;

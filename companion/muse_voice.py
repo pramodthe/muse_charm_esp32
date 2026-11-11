@@ -17,6 +17,11 @@ key stays on this computer.
                                                        just before its audio (subtitles)
              reply audio (binary, 16 kHz 16-bit mono)
 
+Muse also speaks first (Voice.announce): when a timer is up, when its battery
+runs low, and to say good morning. A fixed line is spoken as it is
+(InjectAgentMessage); for a greeting the AI is handed a note and finds its own
+words (InjectUserMessage). "speak_first": false in voice.json turns this off.
+
 The AI has Muse's body and screen as tools (see TOOLS below): muse_do performs
 moves, muse_show puts up a sign, muse_set changes brightness and volume,
 muse_status reads Muse's own sensors, time_now, timer, remember and forget
@@ -56,11 +61,13 @@ LEAD_S = 2.5             # how far ahead of playback reply audio is sent to Muse
 CHUNK = 1600             # 50 ms of reply audio per message to Muse
 HISTORY = 8              # recent messages carried over when reconnecting
 SPEAKING_CPS = 14.5      # characters per second at normal pitch (for subtitles)
+ANNOUNCE_WITHIN_S = 90   # an announcement waits this long for a pause in the conversation
 
 DEFAULTS = {
     "voice": "aura-2-thalia-en",
     "pitch": 1.18,            # 1 = Deepgram's voice unchanged
     "timezone": "",           # an IANA name such as Australia/Sydney; empty: the server's own
+    "speak_first": True,      # timers, a low battery and "good morning" are said aloud
     "listen_model": "nova-3",
     "think_provider": "anthropic",
     "think_model": "claude-haiku-4-5",
@@ -271,7 +278,7 @@ def options():
                 chosen = json.load(f)
         else:
             chosen = {}
-        opts.update({k: v for k, v in chosen.items() if k in DEFAULTS and v})
+        opts.update({k: v for k, v in chosen.items() if k in DEFAULTS and (v or v is False)})
     except (OSError, ValueError, AttributeError) as e:
         log("ignoring the voice options: %s" % e)
     return opts
@@ -320,8 +327,15 @@ class Voice:
         self.heard = 0                      # bytes of microphone audio this turn
         self.discard = False                # drop reply audio (you interrupted it)
         self.replying = False               # reply audio is flowing to Muse
+        self.unprompted = False             # Muse is speaking first (announce)
+        self.cue = []                       # messages for Muse as an announcement starts
+        self.line = ""                      # the announcement's words, until they are captioned
+        self.note = ""                      # the note handed to the AI for an announcement
+        self.refused = False                # Deepgram would not take the announcement just now
+        self.fed = False                    # this Deepgram connection has had microphone audio
         self.pitch = Pitch(DEFAULTS["pitch"])
         self.history = []
+        self.captioned = ""                 # an announcement captioned before Deepgram sent its text
         self.last_sent = self.last_activity = time.monotonic()
         self.tasks = []
 
@@ -331,6 +345,7 @@ class Voice:
         self.heard = 0
         self.discard = True
         self.pending = []
+        self.unprompted, self.cue, self.line = False, [], ""
         self.last_activity = time.monotonic()
         self.link.flush_voice()
         key, problem = key_status()
@@ -346,6 +361,7 @@ class Voice:
             return
         self.heard += len(data)
         if self.ready:
+            self.fed = True
             self._send(ws.BINARY, data)
         elif len(self.pending) < 400:      # about 16 s
             self.pending.append(data)
@@ -378,6 +394,70 @@ class Voice:
                 pass
         self.dg_reader = self.dg_writer = None
         self.ready = False
+        self.replying = self.unprompted = False
+
+    def _close_unfed(self):
+        if self.dg_writer and not (self.fed or self.talking or self.connecting or self.replying or self.unprompted):
+            self.close()
+
+    # ------------------------------------------------------------ speaking first
+    def announce(self, text="", note="", moves=(), sign="", secs=12, alert=""):
+        """Say something without being asked: `text` word for word, or what the
+        AI makes of `note` (a note to itself, for a greeting). `moves` and
+        `sign` go with it. If Muse cannot speak just now it shows `alert`
+        with chirps and a wave instead."""
+        self.tasks = [t for t in self.tasks if not t.done()]
+        self.tasks.append(asyncio.ensure_future(self._announce(text, note, list(moves), sign, secs, alert)))
+
+    async def _announce(self, text, note, moves, sign, secs, alert):
+        try:
+            spoken = await self._speak_up(text, note, moves, sign, secs)
+        except asyncio.CancelledError:
+            return
+        if not spoken and alert:
+            self.link.send_json({"type": "alert", "text": alert})
+
+    async def _speak_up(self, text, note, moves, sign, secs):
+        if not options()["speak_first"] or not read_key():
+            return False
+        connects = 0
+        give_up = time.monotonic() + ANNOUNCE_WITHIN_S
+        while time.monotonic() < give_up:
+            if self.talking or self.replying or self.unprompted:
+                if note:
+                    return True                 # a conversation is under way: the moment has passed
+                await asyncio.sleep(0.2)        # a timer waits for a pause
+                continue
+            if not self.ready:
+                if not self.dg_writer and not self.connecting:
+                    if connects == 2:
+                        return False
+                    connects += 1
+                    self.connecting = asyncio.ensure_future(self._connect())
+                await asyncio.sleep(0.1)
+                continue
+            self.discard = self.refused = False
+            self.unprompted = True
+            self.cue = ([{"type": "voice", "show": ascii_text(sign, 18), "secs": secs}] if sign else []) + \
+                       ([{"type": "voice", "do": moves}] if moves else [])
+            self.line, self.note = text, note
+            self.last_activity = time.monotonic()
+            log("voice: speaking first:", text or note)
+            if note:
+                self._send_json({"type": "InjectUserMessage", "content": note})
+            else:
+                self._send_json({"type": "InjectAgentMessage", "message": text})
+            for _ in range(100):                # the first audio comes within a second or two
+                if self.replying or self.refused or self.talking or not self.ready:
+                    break
+                await asyncio.sleep(0.1)
+            if self.replying:
+                return True
+            self.unprompted, self.cue, self.line = False, [], ""
+            if self.talking and note:
+                return True
+            await asyncio.sleep(1.0)            # refused, or the connection dropped: try again
+        return False
 
     # ------------------------------------------------------------ Deepgram
     def _send(self, op, payload):
@@ -463,12 +543,25 @@ class Voice:
         if self.dg_writer is writer:
             self.dg_reader = self.dg_writer = None
             self.ready = False
+            self.replying = self.unprompted = False
 
     def _start_reply(self):
         if not self.replying:
             self.replying = True
             self.pitch.reset()
             self.link.queue_voice("start", None)
+            for msg in self.cue:            # the sign and moves of an announcement
+                self.link.queue_voice("json", msg)
+            self.cue = []
+            if self.line:                   # its words, unless Deepgram sent them as text already
+                self._caption(self.line)
+                self.history = (self.history + [("assistant", self.line[:400])])[-HISTORY:]
+                self.line, self.captioned = "", self.line
+
+    def _caption(self, content):
+        # In order with the audio, so Muse can time the subtitle.
+        self.link.queue_voice("json", {"type": "voice", "say": ascii_text(content, 190),
+                                       "cps": round(SPEAKING_CPS * self.pitch.factor)})
 
     def _reply_audio(self, data):
         if self.discard or self.talking:
@@ -485,6 +578,7 @@ class Voice:
             log("voice: Deepgram:", t)
         if t == "SettingsApplied":
             self.ready = True
+            self.fed = bool(self.pending)
             for chunk in self.pending:
                 self._send(ws.BINARY, chunk)
             self.pending = []
@@ -495,23 +589,36 @@ class Voice:
                 self.link.flush_voice()
         elif t == "ConversationText":
             role, content = msg.get("role"), msg.get("content") or ""
-            log("voice: %s: %s" % ("you" if role == "user" else "muse", content))
+            if role == "assistant" and content == self.captioned:
+                self.captioned = ""         # an announcement, already captioned and remembered
+                return
+            if role == "assistant" and content == self.line:
+                self.line = ""
+            note = role == "user" and content == self.note
+            log("voice: %s: %s" % ("note" if note else "you" if role == "user" else "muse", content))
             self.history = (self.history + [(role, content[:400])])[-HISTORY:]
-            if role == "user":
+            if note:
+                self.note = ""              # not something you said: nothing to show
+            elif role == "user":
                 self.link.send_json({"type": "voice", "heard": ascii_text(content, 110)})
             elif not self.talking and not self.discard:
-                # In order with the audio, so Muse can time the subtitle.
-                self.link.queue_voice("json", {"type": "voice", "say": ascii_text(content, 190),
-                                               "cps": round(SPEAKING_CPS * self.pitch.factor)})
+                self._caption(content)
             self.last_activity = time.monotonic()
         elif t == "AgentThinking":
-            self.link.send_json({"type": "voice", "state": "thinking"})
+            if not self.unprompted:         # speaking first: no thought cloud beforehand
+                self.link.send_json({"type": "voice", "state": "thinking"})
+        elif t == "InjectionRefused":
+            self.refused = True
         elif t == "AgentStartedSpeaking":
             if not self.talking:
                 self.discard = False
                 self._start_reply()
         elif t == "AgentAudioDone":
-            self.replying = False
+            self.replying = self.unprompted = False
+            if not self.fed and not self.talking:
+                # Opened just to say something. Deepgram drops a connection that
+                # gets no microphone audio (with an error), so close it first.
+                asyncio.get_event_loop().call_later(0.5, self._close_unfed)
             self.link.queue_voice("json", {"type": "voice", "state": "done"})
         elif t == "FunctionCallRequest":
             for f in msg.get("functions") or []:

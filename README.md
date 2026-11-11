@@ -44,6 +44,7 @@ when Claude needs your OK and cheers when the reply is done.
 | Use Claude Code | Shows what Claude is doing, comes up to the glass and waves when it needs you, cheers when it's done |
 | Nothing | Breathes, blinks and glances around; now and then peeks at you up close, looks around, wiggles or stretches |
 | Nothing for 3 minutes | Dozes off: eyes closed, "z z Z", the screen dimmed. Touch it, pick it up or press BOOT to wake it |
+| Set a timer, run its battery down, pick it up in the morning | Speaks first: "Time's up! Tea.", "I'm getting sleepy, could you plug me in?", a good morning |
 
 The AI has Muse's body and screen as tools, so you can just ask: "dance for me", "come closer",
 "show the word hello", "turn the volume down", "good night". It can sense things too: "how's your
@@ -207,9 +208,9 @@ firmware performs them (`perform()` in `firmware/main/behavior.c`):
 | `muse_do` | Performs one or more moves, in order: `wave`, `giggle`, `cheer`, `dance`, `spin`, `shake_head`, `tilt_head`, `bounce`, `sway`, `smile`, `surprised`, `come_closer`, `step_back`, `sleep` | "Dance for me", "come closer", "good night" |
 | `muse_show` | Puts a short sign at the top of the screen for a few seconds | "Show the word hello" |
 | `muse_set` | Changes the screen brightness or speaker volume, until the next restart | "A bit quieter", "dim your screen" |
-| `muse_status` | Reads Muse's own sensors: battery and charging, WiFi, whether it is upright or lying down, how noisy the room is, brightness, volume, time since it started | "How's your battery?", "is it noisy here?" |
+| `muse_status` | Reads Muse's own sensors: battery and charging, WiFi, whether it is upright or lying down, how noisy the room is, brightness, volume, time since it started, free memory | "How's your battery?", "is it noisy here?" |
 | `time_now` | The time, weekday and date where you are | "What time is it?" |
-| `timer` | Sets, lists or cancels timers; when one is up Muse chirps, waves and shows its label | "Set a timer for five minutes for tea" |
+| `timer` | Sets, lists or cancels timers; when one is up Muse says so, waves and shows its label | "Set a timer for five minutes for tea" |
 | `remember`, `forget` | Keeps short notes about you between conversations, and drops them again | "Remember my name is Sam", "forget everything" |
 | `claude_status` | Reads what your Claude Code sessions are doing | "What is Claude doing?" |
 
@@ -222,6 +223,23 @@ they are lost if it restarts.
 Muse also uses the moves by itself to show feelings while it talks. To add a move, add it to
 `MOVES` in `muse_voice.py`, to `muse_move_t` in `muse.h` and the name table in `agent.c`, and
 play it in `perform()`.
+
+### Muse speaks first
+
+Muse does not only answer. It wakes up, comes close and says something by itself when:
+
+| When | Muse |
+| --- | --- |
+| A timer is up | "Time's up! Tea.", with a wave and the label as a sign |
+| Its battery falls to 20 %, and again at 10 % | Asks to be plugged in, with the level as a sign. Not between 10 pm and 8 am |
+| You pick it up, wake it or switch it on for the first time in a morning (5 to 11 am) | Says good morning in its own words, and waves |
+
+Hold BOOT to answer it. The server starts these (`Voice.announce()` in `muse_voice.py`, the
+wording and limits in `muse_world.py`): a timer and the battery are spoken word for word, and for
+the greeting the AI is handed a note and finds its own words, so it can use your name if it
+remembers it. Muse plays them the way it plays any reply, so they need no extra memory on the
+board. If Muse cannot speak (no Deepgram key, or `"speak_first": false` in `voice.json`), a timer
+still ends with chirps, a wave and the sign.
 
 Speech to text, the reply and the voice all come from the
 [Deepgram Voice Agent API](https://developers.deepgram.com/docs/voice-agent), with Claude Haiku
@@ -283,6 +301,7 @@ To change the voice, the model or Muse's personality, create `~/.config/muse/voi
 | `think_provider` / `think_model` | `anthropic` / `claude-haiku-4-5` | Any Deepgram think provider and model, for example `open_ai` / `gpt-4o-mini` |
 | `prompt` | a short, playful Muse | Muse's personality |
 | `timezone` | the server's own | An IANA name such as `Australia/Sydney`, for the time tool |
+| `speak_first` | `true` | `false`: Muse only speaks when spoken to (see [Muse speaks first](#muse-speaks-first)) |
 
 To test voice chat without Muse, `python3 companion/test_voice.py "Hello Muse!"` plays Muse's part
 from your computer (macOS `say`, or `--wav file.wav`) and saves the spoken reply to `reply.wav`.

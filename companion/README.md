@@ -118,6 +118,7 @@ Create `~/.config/muse/voice.json` to change how Muse talks, for example
 | `think_provider` / `think_model` | `anthropic` / `claude-haiku-4-5` | Any Deepgram think provider and model |
 | `prompt` | a short, playful Muse | Muse's personality |
 | `timezone` | the server's own | An IANA name such as `Australia/Sydney`, for the time tool |
+| `speak_first` | `true` | `false`: no spoken timers, battery warnings or good mornings |
 
 The AI's tools are declared in `TOOLS` and carried out in `_function()` in `muse_voice.py`:
 
@@ -128,8 +129,26 @@ The AI's tools are declared in `TOOLS` and carried out in `_function()` in `muse
   Muse sends a `status` message at the start of each conversation and once a minute.
 - `time_now`, `timer`, `remember` and `forget`, in `muse_world.py`. Notes are kept in
   `memory.json` in `~/.config/muse` (or `MUSE_DATA_DIR`) and added to the prompt when a
-  conversation starts. A timer that is up sends Muse an `alert`.
+  conversation starts.
 - `claude_status`: what your Claude Code sessions are doing.
+
+## Speaking first
+
+`Voice.announce()` makes Muse say something nobody asked for. The server opens the Deepgram
+connection if it has to, and sends either `InjectAgentMessage` (a line spoken word for word) or
+`InjectUserMessage` (a note the AI answers in its own words). The audio goes to Muse like any
+reply, after `{"type":"voice","state":"speaking"}`, with a sign and moves alongside. A connection
+opened only for this is closed again afterwards, because Deepgram drops one that never gets
+microphone audio.
+
+| Trigger | From | Says |
+| --- | --- | --- |
+| A timer is up | `Hub.alert()` | `timer_line()`: "Time's up! Tea." |
+| `status` reports a battery at or under 20 %, then 10 %, not charging | `Hub.on_status()` | `battery_line()`; not between 10 pm and 8 am |
+| Muse sends `{"type":"awake"}` (picked up, woken by touch, switched on) | `Hub.on_awake()` | The AI's own good morning, once a day between 5 and 11 am (`state.json` remembers the day) |
+
+An announcement waits for a pause if a conversation is under way (a greeting is dropped instead).
+If Muse cannot speak, it gets `{"type":"alert","text":"..."}`: chirps, a wave and the sign.
 
 ## Claude Code events
 

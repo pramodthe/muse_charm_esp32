@@ -15,6 +15,10 @@
 //   audio, which go to agent.c
 //   {"type":"server","url":"wss://...","token":"..."}  remember the online
 //   server (an empty url forgets it); Muse answers {"type":"paired","url":...}
+//   {"type":"alert","text":"Tea"}  a timer is up and Muse cannot say so
+//
+// Messages to the server: "hello", "status" (how Muse is doing, once a minute),
+// "awake" (picked up, woken or switched on), and agent.c's voice messages.
 
 #include "companion.h"
 
@@ -26,6 +30,7 @@
 #include "audio.h"
 #include "cJSON.h"
 #include "esp_crt_bundle.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_websocket_client.h"
 #include "freertos/FreeRTOS.h"
@@ -53,6 +58,7 @@ static const char *TAG = "companion";
 #define LOST_AFTER_ONLINE_MS 20000  // the TLS handshake over the internet takes a few seconds
 #define RX_MAX 1024
 #define STATUS_EVERY_MS 60000
+#define JUST_SWITCHED_ON_MS 90000  // linked this soon after power-up counts as being woken
 
 static esp_websocket_client_handle_t s_ws;
 static volatile bool s_connected, s_hello_due;
@@ -70,6 +76,7 @@ static char s_online_token[TOKEN_MAX];
 static char s_new_url[URL_MAX], s_new_token[TOKEN_MAX];  // from a "server" message, to be saved
 static volatile bool s_pair_due;
 static volatile bool s_status_due;
+static volatile bool s_awake_due;
 static int64_t s_status_sent_ms;
 static char s_rx[RX_MAX + 1];  // one message, reassembled if it came in pieces
 
@@ -212,10 +219,11 @@ static void on_ws_event(void *arg, esp_event_base_t base, int32_t id, void *data
 
 // ---------------------------------------------------------------- how Muse is doing
 // {"type":"status","battery":87,"charging":true,"usb":true,"wifi":"Home","rssi":-58,
-//  "pose":"upright","noise":34,"brightness":80,"volume":65,"uptime":754}
+//  "pose":"upright","noise":34,"brightness":80,"volume":65,"uptime":754,"ram":41,"psram":5210}
+// ("ram" and "psram": free memory in KB, internal and external)
 static void send_status(void)
 {
-    char msg[320];
+    char msg[384];
     int n = snprintf(msg, sizeof(msg), "{\"type\":\"status\"");
     muse_power_t power;
     if (power_read(&power)) {
@@ -238,8 +246,11 @@ static void send_status(void)
     const float tilt = g_muse.tilt_deg;
     const char *pose = g_muse.flat ? "lying flat" : (tilt > 25 || tilt < -25) ? "tipped on its side" : "upright";
     n += snprintf(msg + n, sizeof(msg) - n,
-                  ",\"pose\":\"%s\",\"noise\":%d,\"brightness\":%d,\"volume\":%d,\"uptime\":%d}", pose,
-                  g_muse.noise_db, panel_awake_brightness(), audio_volume(), (int)(muse_now_ms() / 1000));
+                  ",\"pose\":\"%s\",\"noise\":%d,\"brightness\":%d,\"volume\":%d,\"uptime\":%d"
+                  ",\"ram\":%d,\"psram\":%d}", pose,
+                  g_muse.noise_db, panel_awake_brightness(), audio_volume(), (int)(muse_now_ms() / 1000),
+                  (int)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+                  (int)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
     if (n > 0 && n < (int)sizeof(msg)) {
         companion_send_text(msg);
     }
@@ -405,11 +416,18 @@ static void companion_task(void *arg)
             if (s_hello_due && s_connected) {
                 s_hello_due = false;
                 companion_send_text("{\"type\":\"hello\",\"name\":\"Muse\",\"voice\":1}");
+                if (muse_now_ms() < JUST_SWITCHED_ON_MS) {
+                    s_awake_due = true;  // switched on: someone is here
+                }
             }
             if (s_connected && (s_status_due || muse_now_ms() - s_status_sent_ms > STATUS_EVERY_MS)) {
                 s_status_due = false;
                 s_status_sent_ms = muse_now_ms();
                 send_status();
+            }
+            if (s_awake_due && s_connected) {
+                s_awake_due = false;
+                companion_send_text("{\"type\":\"awake\"}");
             }
             if (s_pair_due && s_connected) {
                 s_pair_due = false;
@@ -455,6 +473,14 @@ bool companion_connected(void)
 void companion_report_status(void)
 {
     s_status_due = true;
+}
+
+void companion_report_awake(void)
+{
+    if (s_connected) {  // only as it happens: no late good mornings after a reconnect
+        s_status_due = true;
+        s_awake_due = true;
+    }
 }
 
 bool companion_next_event(companion_event_t *out)

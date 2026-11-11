@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.0 (2026-11-11)
+
+- **Muse speaks first.** When a timer is up it says so ("Time's up! Tea."), waves and shows the label; when its battery falls to 20 % and to 10 % it asks to be plugged in (not at night); and the first time you pick it up in a morning it says good morning in its own words. Muse wakes, comes close and speaks, and holding BOOT answers it. `"speak_first": false` in `voice.json` turns it off.
+- The server starts these through Deepgram's `InjectAgentMessage` and `InjectUserMessage`; Muse plays them like any reply, so the board needs no extra memory. Muse tells the server when it is picked up or woken (`awake`).
+- `muse_status` also reports Muse's free memory.
+
 ## 0.6.0 (2026-11-11)
 
 - **The AI has Muse's body and screen as tools.** `muse_do` performs moves in order (wave, giggle, cheer, dance, spin, shake_head, tilt_head, bounce, sway, smile, surprised, come_closer, step_back, sleep), `muse_show` puts up a sign, `muse_set` changes brightness and volume, alongside `claude_status`. "Dance for me", "come closer" or "good night" just work. Replaces the single `muse_action` tool.

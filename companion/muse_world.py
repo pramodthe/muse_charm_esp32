@@ -12,6 +12,9 @@ These back the tools in muse_voice.py:
     muse_status  what Muse's own sensors report (battery, WiFi, how it is
                  sitting, how noisy the room is ...)
 
+Muse also speaks first; this module has the words for that: a timer that is
+up, a low battery, and the note that asks the AI for a good-morning.
+
 Notes are kept in memory.json in ~/.config/muse (or MUSE_DATA_DIR on a host).
 The time zone is this computer's unless MUSE_TZ or voice.json's "timezone"
 names another (an IANA name such as Australia/Sydney).
@@ -25,6 +28,7 @@ import time
 
 DATA_DIR = os.environ.get("MUSE_DATA_DIR") or os.path.expanduser("~/.config/muse")
 MEMORY_FILE = os.path.join(DATA_DIR, "memory.json")
+STATE_FILE = os.path.join(DATA_DIR, "state.json")
 MAX_NOTES = 40
 NOTE_MAX = 160
 MAX_TIMERS = 10
@@ -51,6 +55,72 @@ def time_report(zone=""):
         "date": "%d %s" % (t.day, t.strftime("%B %Y")),
         "timezone": str(t.tzinfo) if t.tzinfo else "local",
     }
+
+
+# ---------------------------------------------------------------- speaking first
+QUIET_FROM_HOUR, QUIET_UNTIL_HOUR = 22, 8   # no battery warnings at night
+MORNING_HOURS = range(5, 11)                # when picking Muse up earns a good morning
+BATTERY_LOW, BATTERY_EMPTY, BATTERY_FINE = 20, 10, 30
+
+
+def daytime(zone=""):
+    """Not the hours when Muse keeps quiet unless asked."""
+    return QUIET_UNTIL_HOUR <= now(zone).hour < QUIET_FROM_HOUR
+
+
+GREETING_NOTE = ("(A note from your own senses, not something the user said: they have just picked you up "
+                 "for the first time this morning. Say good morning in one short, warm sentence, and wave.)")
+
+
+def timer_line(label):
+    """What Muse says when a timer is up."""
+    label = " ".join(str(label or "").split())
+    if not label or label.lower().rstrip("!") == "time's up":
+        return "Time's up!"
+    return "Time's up! %s%s." % (label[0].upper(), label[1:])
+
+
+def battery_line(percent, told):
+    """(the level this warning is for, what Muse says, its sign), or None when
+    there is nothing new to say. `told` is the level Muse last warned at (100:
+    not yet); it is back to 100 once Muse is charging or well above low."""
+    if percent <= BATTERY_EMPTY and told > BATTERY_EMPTY:
+        return (BATTERY_EMPTY, "My battery is nearly empty, only %d percent. Please plug me in soon!" % percent,
+                "Battery %d%%" % percent)
+    if percent <= BATTERY_LOW and told > BATTERY_LOW:
+        return (BATTERY_LOW, "I'm getting sleepy. My battery is at %d percent, could you plug me in?" % percent,
+                "Battery %d%%" % percent)
+    return None
+
+
+def greeting_due(zone=""):
+    """True once a day, in the morning. Remembered across restarts."""
+    t = now(zone)
+    today = t.date().isoformat()
+    if t.hour not in MORNING_HOURS or _state().get("greeted") == today:
+        return False
+    _keep("greeted", today)
+    return True
+
+
+def _state():
+    try:
+        with open(STATE_FILE) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _keep(key, value):
+    data = dict(_state(), **{key: value})
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(STATE_FILE + ".tmp", "w") as f:
+            json.dump(data, f)
+        os.replace(STATE_FILE + ".tmp", STATE_FILE)
+    except OSError:
+        pass
 
 
 # ---------------------------------------------------------------- memory
@@ -168,5 +238,7 @@ def status_report(raw, age_s):
             out[key + "_percent"] = raw[key]
     if raw.get("uptime") is not None:
         out["awake_for_minutes"] = round(raw["uptime"] / 60)
+    if raw.get("ram") is not None:
+        out["free_memory_kb"] = {"internal": raw["ram"], "external": raw.get("psram")}
     out["reported_seconds_ago"] = int(age_s)
     return out

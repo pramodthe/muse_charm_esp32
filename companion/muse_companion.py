@@ -146,6 +146,7 @@ class Hub:
         self.devices = {}     # writer -> DeviceLink
         self.timers = muse_world.Timers(self.alert)
         self.missed = []      # alerts that came up while no Muse was connected
+        self.battery_told = 100   # the battery level Muse last warned about (100: not yet)
         self.retired_until = 0.0  # online: a new version is taking over; turn devices away until then
         self.sent = None      # last mood message, re-sent to new devices
 
@@ -249,12 +250,36 @@ class Hub:
             link.send_json(msg)
 
     def alert(self, text):
-        """A timer is up: Muse chirps, waves and shows the text."""
+        """A timer is up: Muse says so, waves and shows its label (when Muse
+        cannot speak: chirps, a wave and the label)."""
         log("alert:", text)
-        if self.devices:
-            self.broadcast({"type": "alert", "text": short(text, 18)})
-        else:
+        label = short(text, 18)
+        for link in list(self.devices.values()):
+            link.voice.announce(text=muse_world.timer_line(text), moves=["wave"], sign=label, secs=15, alert=label)
+        if not self.devices:
             self.missed = (self.missed + [text])[-3:]
+
+    def on_status(self, link):
+        """Muse reported how it is doing: say so when its battery runs low
+        (once at low and once when nearly empty, and not at night)."""
+        percent = link.status.get("battery")
+        if percent is None:
+            return
+        if link.status.get("charging") or link.status.get("usb") or percent >= muse_world.BATTERY_FINE:
+            self.battery_told = 100
+            return
+        warning = muse_world.battery_line(percent, self.battery_told)
+        if warning and muse_voice.options()["speak_first"] and muse_world.daytime(muse_voice.options()["timezone"]):
+            self.battery_told, line, sign = warning
+            log("battery at %d %%: telling" % percent)
+            link.voice.announce(text=line, moves=["tilt_head"], sign=sign, secs=20, alert=sign)
+
+    def on_awake(self, link):
+        """Muse was picked up or woken: the first time in a morning, it says hello."""
+        opts = muse_voice.options()
+        if opts["speak_first"] and muse_voice.read_key() and muse_world.greeting_due(opts["timezone"]):
+            log("good morning")
+            link.voice.announce(note=muse_world.GREETING_NOTE)
 
     def claude_summary(self):
         """What Claude Code is up to, for Muse to talk about."""
@@ -355,6 +380,9 @@ class DeviceLink:
             self.voice.talk_stop()
         elif t == "status":
             self.status, self.status_at = {k: v for k, v in msg.items() if k != "type"}, time.time()
+            self.hub.on_status(self)
+        elif t == "awake":
+            self.hub.on_awake(self)
         elif t == "hello":
             log("Muse says hello", {k: v for k, v in msg.items() if k != "type"})
         elif t == "paired":

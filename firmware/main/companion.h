@@ -47,6 +47,10 @@ void companion_mood_caption(char *buf, size_t len);
 // it also goes out once a minute. The AI reads it with its muse_status tool.
 void companion_report_status(void);
 
+// Tell the server that someone has just picked Muse up or woken it. The first
+// time in a morning, Muse says good morning.
+void companion_report_awake(void);
+
 // Send to the server (voice chat). Return false when not linked.
 bool companion_send_text(const char *text);
 bool companion_send_binary(const void *data, size_t len);

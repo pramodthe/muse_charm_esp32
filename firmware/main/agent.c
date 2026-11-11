@@ -14,6 +14,10 @@
 //                       {"type":"voice","say":"...","cps":17}  a sentence of the reply
 //                       reply audio (binary), paced a little ahead of playback
 //
+// Muse also speaks first (a timer is up, the battery is low, good morning):
+// the server sends "speaking" and audio without a turn, and Muse plays it the
+// same way (behavior.c comes close and moves its mouth).
+//
 // WiFi stays in modem sleep during a conversation: turning power saving off
 // draws more current, and on this board that dipped the supply (glitches on
 // GPIO0, the panel going dark). Larger TCP buffers keep the audio flowing.
@@ -254,6 +258,9 @@ void agent_on_voice(const cJSON *msg)
     }
     if (strcmp(state, "thinking") == 0) {
         if (g_muse.agent_state != MUSE_AGENT_SPEAKING) {
+            if (g_muse.agent_state != MUSE_AGENT_THINKING) {
+                s_turn_end_ms = muse_now_ms();  // the reply is due from now
+            }
             set_state(MUSE_AGENT_THINKING);
         }
     } else if (strcmp(state, "speaking") == 0) {
