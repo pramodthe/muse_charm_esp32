@@ -16,7 +16,14 @@ Deepgram key stays on this computer (~/.config/muse/deepgram_key).
     python3 muse_companion.py          run the server
     python3 muse_companion.py demo     play a made-up Claude Code session
                                        through a running server
+    python3 muse_companion.py pair     run the server and tell the Muse that
+                                       connects where the online server is
     curl http://127.0.0.1:8765/        what the server sees right now
+
+Online: the same server can run on a host on the internet, so Muse works
+without this computer (see deploy_modal.py and the README). Setting MUSE_TOKEN
+puts it in online mode: Muse and the hooks must then present that token, and
+the local-network beacon is off.
 
 Only the Python standard library is used (Python 3.8 or later).
 
@@ -28,6 +35,7 @@ project folder name.
 
 import argparse
 import asyncio
+import hmac
 import json
 import os
 import socket
@@ -35,6 +43,7 @@ import sys
 import time
 import urllib.request
 
+import muse_online
 import muse_voice
 import muse_ws as ws
 
@@ -127,8 +136,10 @@ class Session:
 
 
 class Hub:
-    def __init__(self, name):
+    def __init__(self, name, token="", pair=None):
         self.name = name
+        self.token = token    # online mode: what Muse and the hooks must present
+        self.pair = pair      # {"url", "token"} to hand to the Muse that connects, or None
         self.sessions = {}
         self.devices = {}     # writer -> DeviceLink
         self.sent = None      # last mood message, re-sent to new devices
@@ -251,6 +262,8 @@ class Hub:
         self.devices[writer] = link
         log("Muse connected from", peer)
         link.send_json({"type": "hello", "name": self.name})
+        if self.pair is not None:
+            link.send_json(dict(self.pair, type="server"))
         link.announce_voice()
         if self.sent:
             link.send_json(self.sent)
@@ -323,6 +336,11 @@ class DeviceLink:
             self.voice.talk_stop()
         elif t == "hello":
             log("Muse says hello", {k: v for k, v in msg.items() if k != "type"})
+        elif t == "paired":
+            if msg.get("url"):
+                log("Muse saved the online server. Stop this server (Ctrl-C) and Muse will use it.")
+            else:
+                log("Muse forgot the online server; it will only look for one on this network.")
 
     # Reply audio is paced: at most LEAD_S ahead of playback, so Muse's buffer
     # never overflows and a "stop" takes effect quickly.
@@ -370,6 +388,14 @@ def is_loopback(host):
     return host in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
 
 
+def authorized(hub, headers):
+    """Online mode: the request carries the token."""
+    given = headers.get("authorization", "")
+    if given.lower().startswith("bearer "):
+        given = given[7:].strip()
+    return bool(hub.token) and hmac.compare_digest(given.encode(), hub.token.encode())
+
+
 async def handle(hub, reader, writer):
     peer = (writer.get_extra_info("peername") or ("?",))[0]
     try:
@@ -383,9 +409,13 @@ async def handle(hub, reader, writer):
                 k, v = line.split(":", 1)
                 headers[k.strip().lower()] = v.strip()
 
+        if hub.token:
+            peer = headers.get("x-forwarded-for", peer).split(",")[0].strip()  # behind the host's proxy
+
         if method == "POST" and path == "/hook":
-            if not is_loopback(peer):
-                respond(writer, "403 Forbidden")       # hooks come from this computer only
+            # Hooks come from this computer only; online, from whoever has the token.
+            if not (authorized(hub, headers) if hub.token else is_loopback(peer)):
+                respond(writer, "403 Forbidden")
                 return
             n = int(headers.get("content-length") or 0)
             if n > MAX_HOOK_BYTES:
@@ -406,6 +436,10 @@ async def handle(hub, reader, writer):
             return
 
         if path == "/device" and headers.get("upgrade", "").lower() == "websocket":
+            if hub.token and not authorized(hub, headers):
+                log("refused a device without the token from", peer)
+                respond(writer, "401 Unauthorized")
+                return
             key = headers.get("sec-websocket-key", "")
             writer.write(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
                           "Sec-WebSocket-Accept: %s\r\n\r\n" % ws.accept_key(key)).encode())
@@ -414,7 +448,8 @@ async def handle(hub, reader, writer):
             return
 
         if method == "GET" and path == "/":
-            respond(writer, "200 OK", json.dumps(hub.status(), indent=2).encode() + b"\n")
+            status = hub.status() if not hub.token or authorized(hub, headers) else {"server": "muse companion"}
+            respond(writer, "200 OK", json.dumps(status, indent=2).encode() + b"\n")
             return
         respond(writer, "404 Not Found")
     except (asyncio.TimeoutError, asyncio.IncompleteReadError, asyncio.LimitOverrunError,
@@ -486,14 +521,24 @@ def computer_name():
     return ascii_only(name.replace("-", " "))[:20] or "this computer"
 
 
-async def serve(port):
-    hub = Hub(computer_name())
+async def serve(port, pair=None):
+    token = os.environ.get("MUSE_TOKEN", "").strip()
+    name = os.environ.get("MUSE_NAME", "the online server") if token else computer_name()
+    hub = Hub(name, token, pair)
     server = await asyncio.start_server(lambda r, w: handle(hub, r, w), host="0.0.0.0", port=port,
                                         limit=1 << 16)
-    log("Muse companion on port %d (%s, %s)" % (port, hub.name, local_ip() or "no network"))
+    if token:
+        log("Muse companion online on port %d; Muse and the hooks need the token" % port)
+    else:
+        log("Muse companion on port %d (%s, %s)" % (port, hub.name, local_ip() or "no network"))
     log("voice chat:", muse_voice.key_status()[1] or "ready")
+    if pair is not None:
+        log("pairing: the Muse that connects will be told %s" % (
+            "to use " + pair["url"] if pair["url"] else "to forget the online server"))
     log("waiting for Muse and for Claude Code hooks; Ctrl-C to stop")
-    tasks = [asyncio.ensure_future(beacon(hub, port)), asyncio.ensure_future(keepalive(hub))]  # keep references
+    tasks = [asyncio.ensure_future(keepalive(hub))]  # keep references
+    if not token:
+        tasks.append(asyncio.ensure_future(beacon(hub, port)))  # Muse finds a local server by itself
     async with server:
         await server.serve_forever()
 
@@ -523,30 +568,47 @@ DEMO = [
 ]
 
 
-def demo(port):
-    url = "http://127.0.0.1:%d/hook" % port
+def demo(port, online):
+    url, headers = "http://127.0.0.1:%d/hook" % port, {"Content-Type": "application/json"}
+    if online:
+        saved = muse_online.load()
+        if not saved.get("url"):
+            sys.exit("no online server saved in %s" % muse_online.SERVER_FILE)
+        url = muse_online.http_url(saved["url"], "/hook")
+        headers["Authorization"] = "Bearer " + saved.get("token", "")
     for delay, ev in DEMO:
         time.sleep(delay)
         ev = dict(ev, session_id="demo", cwd="/demo/muse_charm_esp32")
         print("->", ev["hook_event_name"], ev.get("tool_name", ""), flush=True)
-        req = urllib.request.Request(url, data=json.dumps(ev).encode(),
-                                     headers={"Content-Type": "application/json"})
+        req = urllib.request.Request(url, data=json.dumps(ev).encode(), headers=headers)
         try:
-            urllib.request.urlopen(req, timeout=2).read()
+            urllib.request.urlopen(req, timeout=10 if online else 2).read()
         except OSError as e:
-            sys.exit("the server is not running (%s); start it with: python3 muse_companion.py" % e)
+            sys.exit("the server did not take it (%s)%s" % (
+                e, "" if online else "; start it with: python3 muse_companion.py"))
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Muse companion server for Claude Code")
-    ap.add_argument("command", nargs="?", default="serve", choices=["serve", "demo"])
-    ap.add_argument("--port", type=int, default=PORT)
+    ap = argparse.ArgumentParser(description="Muse companion server for Claude Code and voice chat")
+    ap.add_argument("command", nargs="?", default="serve", choices=["serve", "demo", "pair"])
+    ap.add_argument("--port", type=int, default=int(os.environ.get("PORT") or PORT))
+    ap.add_argument("--online", action="store_true", help="demo: play it through the online server")
+    ap.add_argument("--forget", action="store_true", help="pair: make Muse forget the online server")
     args = ap.parse_args()
     if args.command == "demo":
-        demo(args.port)
+        demo(args.port, args.online)
         return
+    pair = None
+    if args.command == "pair":
+        saved = muse_online.load()
+        if args.forget:
+            pair = {"url": "", "token": ""}
+        elif saved.get("url") and saved.get("token"):
+            pair = {"url": muse_online.device_url(saved["url"]), "token": saved["token"]}
+        else:
+            sys.exit("no online server saved in %s; deploy one first (see the README)" % muse_online.SERVER_FILE)
     try:
-        asyncio.run(serve(args.port))
+        asyncio.run(serve(args.port, pair))
     except KeyboardInterrupt:
         pass
 

@@ -88,12 +88,24 @@ menu "Muse charm"
                 the server on the local network by itself.
 
         config MUSE_COMPANION_URL
-            string "Server address (empty: find it automatically)"
+            string "Server address when none is found on the local network"
             depends on MUSE_COMPANION_ENABLE
             default ""
             help
-                Only needed on networks that block broadcasts, for example
-                ws://192.168.1.20:8765/device
+                Muse looks for a companion server on the local network first.
+                Without one it uses this address: an online server
+                (wss://your-app.example.com/device), or a local one on a
+                network that blocks broadcasts (ws://192.168.1.20:8765/device).
+                Usually left empty: "muse_companion.py pair" tells Muse the
+                online server's address and token without rebuilding.
+
+        config MUSE_COMPANION_TOKEN
+            string "Token for that server"
+            depends on MUSE_COMPANION_ENABLE
+            default ""
+            help
+                The online server's MUSE_TOKEN. Keep it out of anything you
+                publish (sdkconfig is not in the repository).
 
         config MUSE_COMPANION_SOUNDS
             bool "Chirp when Claude finishes or needs you"

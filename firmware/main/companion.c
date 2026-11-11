@@ -1,12 +1,20 @@
 // SPDX-License-Identifier: MIT
 // Claude Code companion client. See companion.h and companion/README.md.
 //
+// Where the server is: Muse first listens for a companion server on the local
+// network (its UDP beacon). If there is none, it connects to the online server
+// it was told about, over TLS, presenting its token. The address and token are
+// saved in NVS when a local server sends them ("muse_companion.py pair"), or
+// set at build time in menuconfig.
+//
 // Messages from the server (JSON text frames):
 //   {"type":"hello","name":"pramods mac"}
 //   {"type":"claude","mood":"working","caption":"Editing face.c"}
 //   {"type":"claude","mood":"idle","caption":"","event":"done","event_caption":"Done!"}
 //   {"type":"voice_ready","on":true}, {"type":"voice",...} and binary reply
 //   audio, which go to agent.c
+//   {"type":"server","url":"wss://...","token":"..."}  remember the online
+//   server (an empty url forgets it); Muse answers {"type":"paired","url":...}
 
 #include "companion.h"
 
@@ -16,6 +24,7 @@
 
 #include "agent.h"
 #include "cJSON.h"
+#include "esp_crt_bundle.h"
 #include "esp_log.h"
 #include "esp_websocket_client.h"
 #include "freertos/FreeRTOS.h"
@@ -24,14 +33,20 @@
 #include "freertos/task.h"
 #include "lwip/sockets.h"
 #include "muse.h"
+#include "nvs.h"
 #include "wifi.h"
 
 static const char *TAG = "companion";
+
+#define NVS_NAMESPACE "muse_link"
+#define URL_MAX 160
+#define TOKEN_MAX 96
 
 #define BEACON_PORT 47800
 #define BEACON_MAGIC "MUSE-COMPANION 1 "
 #define LISTEN_MS 3000      // wait this long for a beacon per try
 #define LOST_AFTER_MS 8000  // offline this long: look for the server again
+#define LOST_AFTER_ONLINE_MS 20000  // the TLS handshake over the internet takes a few seconds
 #define RX_MAX 1024
 
 static esp_websocket_client_handle_t s_ws;
@@ -42,7 +57,13 @@ static SemaphoreHandle_t s_lock;
 static SemaphoreHandle_t s_ws_lock;  // s_ws may be destroyed while another task sends
 static int s_last_op;
 static char s_mood_caption[COMPANION_CAPTION_LEN];
-static char s_uri[96];
+static char s_uri[URL_MAX];
+static char s_headers[TOKEN_MAX + 32];
+static bool s_using_online;                // s_uri is the online server
+static char s_online_url[URL_MAX];         // "" if Muse knows of none
+static char s_online_token[TOKEN_MAX];
+static char s_new_url[URL_MAX], s_new_token[TOKEN_MAX];  // from a "server" message, to be saved
+static volatile bool s_pair_due;
 static char s_rx[RX_MAX + 1];  // one message, reassembled if it came in pieces
 
 // ---------------------------------------------------------------- messages
@@ -93,6 +114,17 @@ static void handle_message(const char *text, int len)
         snprintf(caption, sizeof(caption), "Linked to %.30s", name && name[0] ? name : "your computer");
         ESP_LOGI(TAG, "%s", caption);
         post_event(COMPANION_LINKED, caption);
+    } else if (type && strcmp(type, "server") == 0) {
+        // Remember (or forget) the online server; the companion task saves it.
+        const char *url = cJSON_GetStringValue(cJSON_GetObjectItem(root, "url"));
+        const char *token = cJSON_GetStringValue(cJSON_GetObjectItem(root, "token"));
+        if (url && strlen(url) < URL_MAX && (!token || strlen(token) < TOKEN_MAX) && !s_using_online) {
+            xSemaphoreTake(s_lock, portMAX_DELAY);
+            snprintf(s_new_url, sizeof(s_new_url), "%s", url);
+            snprintf(s_new_token, sizeof(s_new_token), "%s", token ? token : "");
+            xSemaphoreGive(s_lock);
+            s_pair_due = true;
+        }
     } else if (type && strcmp(type, "voice_ready") == 0) {
         agent_on_voice_ready(cJSON_IsTrue(cJSON_GetObjectItem(root, "on")));
     } else if (type && strcmp(type, "voice") == 0) {
@@ -174,16 +206,66 @@ static void on_ws_event(void *arg, esp_event_base_t base, int32_t id, void *data
     }
 }
 
+// ---------------------------------------------------------------- the online server
+static void online_load(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &h) == ESP_OK) {
+        size_t n = sizeof(s_online_url);
+        if (nvs_get_str(h, "url", s_online_url, &n) != ESP_OK) {
+            s_online_url[0] = '\0';
+        }
+        n = sizeof(s_online_token);
+        if (nvs_get_str(h, "token", s_online_token, &n) != ESP_OK) {
+            s_online_token[0] = '\0';
+        }
+        nvs_close(h);
+    }
+    if (!s_online_url[0] && CONFIG_MUSE_COMPANION_URL[0]) {  // the build's default
+        snprintf(s_online_url, sizeof(s_online_url), "%s", CONFIG_MUSE_COMPANION_URL);
+        snprintf(s_online_token, sizeof(s_online_token), "%s", CONFIG_MUSE_COMPANION_TOKEN);
+    }
+    if (s_online_url[0]) {
+        ESP_LOGI(TAG, "online server: %s", s_online_url);
+    }
+}
+
+// Save what a "server" message brought, and tell the server.
+static void online_save(void)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    snprintf(s_online_url, sizeof(s_online_url), "%s", s_new_url);
+    snprintf(s_online_token, sizeof(s_online_token), "%s", s_new_token);
+    xSemaphoreGive(s_lock);
+    nvs_handle_t h;
+    bool saved = false;
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) == ESP_OK) {
+        saved = nvs_set_str(h, "url", s_online_url) == ESP_OK && nvs_set_str(h, "token", s_online_token) == ESP_OK &&
+                nvs_commit(h) == ESP_OK;
+        nvs_close(h);
+    }
+    if (!saved) {
+        ESP_LOGW(TAG, "could not save the online server");
+        return;
+    }
+    char reply[URL_MAX + 40];
+    if (s_online_url[0]) {
+        ESP_LOGI(TAG, "saved the online server: %s", s_online_url);
+        snprintf(reply, sizeof(reply), "{\"type\":\"paired\",\"url\":\"%s\"}", s_online_url);
+    } else {
+        ESP_LOGI(TAG, "forgot the online server");
+        snprintf(reply, sizeof(reply), "{\"type\":\"paired\",\"url\":\"\"}");
+    }
+    companion_send_text(reply);
+}
+
 // ---------------------------------------------------------------- finding the server
-// Listen for the server's beacon ("MUSE-COMPANION 1 <port> <name>") and build
-// the websocket address from where it came from.
+// Listen for a local server's beacon ("MUSE-COMPANION 1 <port> <name>") and
+// build the websocket address from where it came from. Without one, fall back
+// to the online server, if Muse knows of one.
 static bool discover(char *uri, size_t len)
 {
-    if (CONFIG_MUSE_COMPANION_URL[0]) {
-        snprintf(uri, len, "%s", CONFIG_MUSE_COMPANION_URL);
-        vTaskDelay(pdMS_TO_TICKS(LISTEN_MS));  // pace the retries
-        return true;
-    }
+    s_using_online = false;
     const int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock < 0) {
         vTaskDelay(pdMS_TO_TICKS(LISTEN_MS));
@@ -218,12 +300,17 @@ static bool discover(char *uri, size_t len)
         vTaskDelay(pdMS_TO_TICKS(LISTEN_MS));
     }
     close(sock);
+    if (!found && s_online_url[0]) {
+        snprintf(uri, len, "%s", s_online_url);
+        s_using_online = true;
+        found = true;
+    }
     return found;
 }
 
 static void open_ws(void)
 {
-    const esp_websocket_client_config_t cfg = {
+    esp_websocket_client_config_t cfg = {
         .uri = s_uri,
         .buffer_size = 2048,
         .task_stack = 4096,
@@ -231,6 +318,15 @@ static void open_ws(void)
         .reconnect_timeout_ms = 3000,
         .ping_interval_sec = 10,
     };
+    if (strncmp(s_uri, "wss://", 6) == 0) {
+        cfg.crt_bundle_attach = esp_crt_bundle_attach;  // check the server's certificate
+        cfg.task_stack = 8192;                          // room for the TLS handshake
+        cfg.network_timeout_ms = 10000;
+    }
+    if (s_using_online && s_online_token[0]) {
+        snprintf(s_headers, sizeof(s_headers), "Authorization: Bearer %s\r\n", s_online_token);
+        cfg.headers = s_headers;
+    }
     s_ws = esp_websocket_client_init(&cfg);
     if (!s_ws) {
         ESP_LOGE(TAG, "could not create the websocket");
@@ -271,7 +367,12 @@ static void companion_task(void *arg)
                 s_hello_due = false;
                 companion_send_text("{\"type\":\"hello\",\"name\":\"Muse\",\"voice\":1}");
             }
-            if (!s_connected && muse_now_ms() - s_offline_since_ms > LOST_AFTER_MS) {
+            if (s_pair_due && s_connected) {
+                s_pair_due = false;
+                online_save();
+            }
+            if (!s_connected &&
+                    muse_now_ms() - s_offline_since_ms > (s_using_online ? LOST_AFTER_ONLINE_MS : LOST_AFTER_MS)) {
                 ESP_LOGI(TAG, "no answer from %s; looking for the server again", s_uri);
                 destroy_ws();
                 said_looking = false;
@@ -280,7 +381,8 @@ static void companion_task(void *arg)
             continue;
         }
         if (!said_looking) {
-            ESP_LOGI(TAG, "looking for the companion server on UDP port %d", BEACON_PORT);
+            ESP_LOGI(TAG, "looking for a companion server on this network (UDP port %d)%s", BEACON_PORT,
+                     s_online_url[0] ? ", then online" : "");
             said_looking = true;
         }
         if (discover(s_uri, sizeof(s_uri))) {
@@ -296,8 +398,9 @@ void companion_start(void)
     s_events = xQueueCreate(6, sizeof(companion_event_t));
     s_lock = xSemaphoreCreateMutex();
     s_ws_lock = xSemaphoreCreateMutex();
+    online_load();
     g_muse.claude_mood = MUSE_MOOD_OFF;
-    xTaskCreatePinnedToCore(companion_task, "muse_companion", 4096, NULL, 2, NULL, 0);
+    xTaskCreatePinnedToCore(companion_task, "muse_companion", 6144, NULL, 2, NULL, 0);
 }
 
 bool companion_connected(void)

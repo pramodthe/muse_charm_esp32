@@ -19,7 +19,7 @@ Muse's voice is the Deepgram voice raised in pitch (and a little faster), so
 it sounds like the same small creature that chirps.
 
 Key:      ~/.config/muse/deepgram_key, or the DEEPGRAM_API_KEY environment variable
-Options:  ~/.config/muse/voice.json, for example
+Options:  ~/.config/muse/voice.json (or the same JSON in MUSE_VOICE), for example
           {"voice": "aura-2-luna-en", "pitch": 1.25, "think_provider": "open_ai",
            "think_model": "gpt-4o-mini", "prompt": "You are Muse, ..."}
 """
@@ -138,13 +138,20 @@ def read_key():
 
 
 def options():
+    """The defaults, changed by voice.json or, on a host without files, by the
+    same JSON in the MUSE_VOICE environment variable."""
     opts = dict(DEFAULTS)
-    if os.path.exists(OPTIONS_FILE):
-        try:
+    try:
+        if os.environ.get("MUSE_VOICE"):
+            chosen = json.loads(os.environ["MUSE_VOICE"])
+        elif os.path.exists(OPTIONS_FILE):
             with open(OPTIONS_FILE) as f:
-                opts.update({k: v for k, v in json.load(f).items() if k in DEFAULTS and v})
-        except (OSError, ValueError) as e:
-            log("ignoring %s: %s" % (OPTIONS_FILE, e))
+                chosen = json.load(f)
+        else:
+            chosen = {}
+        opts.update({k: v for k, v in chosen.items() if k in DEFAULTS and v})
+    except (OSError, ValueError, AttributeError) as e:
+        log("ignoring the voice options: %s" % e)
     return opts
 
 

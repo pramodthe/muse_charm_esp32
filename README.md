@@ -68,6 +68,8 @@ are synthesized on the board.
   It relays voice chat to Deepgram, so the API key never goes on the board, and turns Claude
   Code's hooks into moods and captions for Muse.
 - Muse finds the server by itself: the server announces itself on your network with a UDP beacon.
+- The same server can run [online](#without-your-computer-the-server-online) instead, so Muse
+  works anywhere there is WiFi, with no computer switched on.
 
 ## Hardware
 
@@ -128,6 +130,56 @@ python3 companion/install_hooks.py
 
 This adds the hooks to `~/.claude/settings.json`, keeping your other settings and a backup.
 Restart Claude Code sessions that are already open. `install_hooks.py --remove` takes them out.
+
+## Without your computer: the server online
+
+The companion server can run on a host on the internet instead of on your computer. Muse then
+talks to you anywhere it has WiFi, and Claude Code can still report to it. It is the same
+program in "online mode": Muse and the Claude Code hooks must present a token (a long random
+password), and Muse connects over TLS and checks the server's certificate. It is not faster than
+a server on your computer: the wait for a reply is Deepgram's, not the network's.
+
+With [Modal](https://modal.com), which bills by the second while Muse is connected and stops the
+server a few minutes after Muse disconnects (check Modal's pricing for the current free
+allowance):
+
+1. Log in to Modal once: `pip install modal`, then `modal setup` (with uv: `uvx modal setup`).
+2. Deploy, from the repository root:
+
+   ```sh
+   python3 companion/deploy_modal.py
+   ```
+
+   It makes the token, stores the token and your Deepgram key in Modal as the secret
+   `muse-companion`, deploys `companion/modal_app.py` and saves the server's address and the
+   token in `~/.config/muse/server.json` on your computer. Run it again after changing the
+   server's code, your key or your voice options.
+3. Try it without Muse: `python3 companion/test_voice.py --online "Hello Muse!"`.
+4. Tell Muse. With Muse on the same WiFi as your computer:
+
+   ```sh
+   /usr/bin/python3 companion/muse_companion.py pair
+   ```
+
+   When it says Muse saved the online server, stop it (Ctrl-C). Muse keeps the address and token
+   in its own storage. From then on it looks for a server on the local network for three seconds
+   and, finding none, connects to the online one. `pair --forget` makes Muse forget it.
+5. Point Claude Code at it: `python3 companion/install_hooks.py --online`. Online, the hooks run
+   `companion/muse_hook.py`, which keeps only what Muse shows (the event, the project folder's
+   name, the tool, a file name or Claude's one-line description of a command) and sends that in
+   the background. Your prompts, file contents and commands never leave your computer.
+   `python3 companion/muse_hook.py --print < event.json` shows exactly what would be sent.
+
+Any other host that runs containers and passes websockets through over https works too
+(DigitalOcean App Platform, Fly.io, Render, a VPS behind a proxy): build
+[`companion/Dockerfile`](companion/Dockerfile), set `DEEPGRAM_API_KEY` and `MUSE_TOKEN` in the
+host's settings, and save `{"url": "wss://your-host/device", "token": "..."}` in
+`~/.config/muse/server.json` before pairing.
+
+What changes online: your voice travels from Muse to that host and on to Deepgram, and the host
+holds your Deepgram key, so use a host you trust. Anyone with the token can use the server, so
+keep `server.json` to yourself. To switch back, start the local server; a Muse that is already
+connected online notices it after a restart.
 
 ## Voice chat
 
@@ -318,6 +370,11 @@ companion/             runs on your computer
   muse_ws.py           small websocket implementation
   install_hooks.py     adds or removes the Claude Code hooks
   test_voice.py        tests voice chat without Muse
+  deploy_modal.py      puts the server online with Modal
+  modal_app.py         the server as a Modal app
+  Dockerfile           the server for any other container host
+  muse_hook.py         the Claude Code hook for an online server (sends only what Muse shows)
+  muse_online.py       where the online server is (~/.config/muse/server.json)
 assets/                exported frames and anchors (input to the build)
 blender/
   muse.blend           character, rig, studio lights, device camera
@@ -362,6 +419,9 @@ the scene, because the anchors are taken from them.
   is blocking Python (see step 3). If it never finds the server, the network blocks broadcasts
   (guest WiFi, many offices): set the server address in menuconfig, for example
   `ws://192.168.1.20:8765/device`.
+- **Muse never links to the online server.** Its serial log says why: a certificate or TLS error,
+  "401" (pair again, the token changed), or no answer (the host is down). Check the server with
+  `python3 companion/test_voice.py --online`.
 - **Muse shakes its head when you hold BOOT:** voice chat couldn't start. The server's output says
   why: no key or an unusable key file, or an error from Deepgram (for example an invalid voice
   name).

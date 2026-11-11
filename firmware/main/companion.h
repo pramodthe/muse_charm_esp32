@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Claude Code companion: Muse shows what Claude Code is doing on your computer.
 //
-// companion/muse_companion.py runs on the computer and announces itself on the
-// local network with a UDP beacon. Muse connects to it over a websocket and
+// companion/muse_companion.py runs on your computer and announces itself on
+// the local network with a UDP beacon, or runs on a host on the internet, whose
+// address Muse is told once ("pair"). Muse connects to it over a websocket and
 // receives the current mood (thinking, working, needs you) with a short
 // caption, plus one-off events (hello, done, oops...) to react to. Voice chat
 // (agent.c) is relayed over the same connection.

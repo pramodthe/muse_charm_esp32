@@ -3,6 +3,7 @@
 """Add (or remove) the Claude Code hooks that tell Muse what Claude is doing.
 
     python3 install_hooks.py            add the hooks to ~/.claude/settings.json
+    python3 install_hooks.py --online   the same, for a companion server on the internet
     python3 install_hooks.py --remove   take them out again
     python3 install_hooks.py --print    show the hooks without changing anything
 
@@ -10,6 +11,10 @@ Each hook sends the event to the Muse companion server on this computer with
 curl, waits at most one second, and always succeeds, so Claude Code works the
 same whether or not the server or Muse is running. A backup of the settings
 file is kept next to it as settings.json.muse-backup.
+
+With --online the hooks run muse_hook.py instead, which keeps only what Muse
+shows (no prompts, file contents or commands) and sends that to the server in
+~/.config/muse/server.json, in the background.
 """
 
 import argparse
@@ -22,6 +27,8 @@ MARK = "muse-companion"
 URL = "http://127.0.0.1:8765/hook?src=" + MARK
 COMMAND = ("curl -s -m 1 -o /dev/null -H 'Content-Type: application/json' -H 'Expect:' "
            "--data-binary @- '%s' || true" % URL)
+ONLINE_COMMAND = "/usr/bin/env python3 '%s' %s" % (
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "muse_hook.py"), MARK)
 EVENTS = [
     "SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
     "PermissionRequest", "Notification", "SubagentStart", "SubagentStop", "Stop",
@@ -60,22 +67,23 @@ def remove(settings):
     return removed
 
 
-def add(settings):
+def add(settings, command=COMMAND):
     hooks = settings.setdefault("hooks", {})
     for event in EVENTS:
-        hooks.setdefault(event, []).append({"hooks": [{"type": "command", "command": COMMAND, "timeout": 5}]})
+        hooks.setdefault(event, []).append({"hooks": [{"type": "command", "command": command, "timeout": 5}]})
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--remove", action="store_true", help="remove the Muse hooks")
+    ap.add_argument("--online", action="store_true", help="send to the online server (see muse_hook.py)")
     ap.add_argument("--print", action="store_true", help="print the hooks and change nothing")
     ap.add_argument("--settings", default=os.path.expanduser("~/.claude/settings.json"))
     args = ap.parse_args()
 
     if args.print:
         demo = {}
-        add(demo)
+        add(demo, ONLINE_COMMAND if args.online else COMMAND)
         print(json.dumps(demo, indent=2))
         return
 
@@ -94,7 +102,7 @@ def main():
 
     removed = remove(settings)  # never add twice
     if not args.remove:
-        add(settings)
+        add(settings, ONLINE_COMMAND if args.online else COMMAND)
 
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
@@ -106,7 +114,8 @@ def main():
     if args.remove:
         print("Removed %d Muse hook(s) from %s" % (removed, path))
     else:
-        print("Muse hooks are in %s (%d events)." % (path, len(EVENTS)))
+        print("Muse hooks are in %s (%d events, sending to %s)." % (
+            path, len(EVENTS), "the online server" if args.online else "this computer"))
         print("New Claude Code sessions will report to Muse; restart any that are open.")
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0 (2026-11-11)
+
+- **The server can run online**, so Muse works anywhere there is WiFi with no computer on. Online mode (`MUSE_TOKEN` set) requires a token from Muse and from the hooks and turns the local beacon off. `deploy_modal.py` deploys it to Modal; a `Dockerfile` covers other hosts.
+- Muse looks for a local server first and otherwise connects to the online one over TLS, checking its certificate. `muse_companion.py pair` tells Muse the address and token once; Muse keeps them in NVS.
+- `install_hooks.py --online`: the hooks run `muse_hook.py`, which keeps only what Muse shows (no prompts, file contents or commands) and sends it in the background.
+- `test_voice.py --online` and `muse_companion.py demo --online` test the deployed server.
+
 ## 0.5.0 (2026-11-11)
 
 - **A camera.** The body frames are one wide shot; the board now crops and enlarges them itself (a two-pass bilinear zoom, about 27 ms a frame) and eases between shots: wide, medium, close and a peek right up to the glass. The face is drawn live through the same view, so it stays sharp at any zoom, and touches are mapped back through it. No new artwork.

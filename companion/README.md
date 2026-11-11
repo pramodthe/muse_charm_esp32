@@ -27,6 +27,10 @@ Claude Code ──hooks (curl)──> muse_companion.py <──websocket──> 
 | `muse_ws.py` | A small websocket implementation (server and client) |
 | `install_hooks.py` | Adds or removes the Claude Code hooks |
 | `test_voice.py` | Plays Muse's part from your computer, to test voice chat without Muse |
+| `deploy_modal.py`, `modal_app.py` | Put the server online with Modal |
+| `Dockerfile` | The server for any other container host |
+| `muse_hook.py` | The Claude Code hook for an online server: keeps only what Muse shows |
+| `muse_online.py` | Where the online server is (`~/.config/muse/server.json`) |
 
 - The server announces itself on the local network with a UDP beacon, so Muse finds it without
   any setup and connects back over one websocket.
@@ -79,6 +83,21 @@ Claude Code ──hooks (curl)──> muse_companion.py <──websocket──> 
    ```
 
    New Claude Code sessions report to Muse; restart sessions that are already open.
+
+## Online
+
+The server can run on the internet instead, so Muse works without your computer; see
+[the README](../README.md#without-your-computer-the-server-online) for the steps. What differs in
+online mode (the `MUSE_TOKEN` environment variable is set):
+
+- Muse (`/device`) and the hooks (`/hook`) must send `Authorization: Bearer <token>`; without it
+  the status page shows nothing but the server's name.
+- No beacon. Muse learns the address and token from a local server run as
+  `muse_companion.py pair`, and keeps them in its own storage.
+- The Deepgram key comes from `DEEPGRAM_API_KEY`, and voice options from `MUSE_VOICE` (the same
+  JSON as `voice.json`).
+- The hooks run `muse_hook.py`, which strips each event down to what Muse shows before anything
+  leaves your computer, and sends it in the background.
 
 ## Voice options
 

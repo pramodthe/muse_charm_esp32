@@ -4,6 +4,7 @@
 running companion server and save the spoken reply.
 
     python3 test_voice.py "Hello Muse, what is Claude doing?"
+    python3 test_voice.py --online "Hello Muse!"     through the online server
 
 On macOS the sentence is spoken with the built-in `say` voice; elsewhere pass
 a 16 kHz 16-bit mono WAV file with --wav. The reply is saved to reply.wav.
@@ -20,6 +21,7 @@ import time
 import wave
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import muse_online    # noqa: E402
 import muse_ws as ws  # noqa: E402
 
 RATE = 16000
@@ -39,8 +41,8 @@ def pcm_from_wav(path):
         return w.readframes(w.getnframes())
 
 
-async def run(pcm, port, out):
-    reader, writer = await ws.connect("ws://127.0.0.1:%d/device" % port)
+async def run(pcm, url, token, out):
+    reader, writer = await ws.connect(url, {"Authorization": "Bearer " + token} if token else None)
     start = time.monotonic()
     reply = bytearray()
     done = asyncio.Event()
@@ -95,10 +97,17 @@ def main():
     ap.add_argument("text", nargs="?", default="Hello Muse! What is Claude doing right now?")
     ap.add_argument("--wav", help="16 kHz 16-bit mono WAV to send instead of speaking the text")
     ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--online", action="store_true", help="use the online server in ~/.config/muse/server.json")
     ap.add_argument("--out", default="reply.wav")
     args = ap.parse_args()
     pcm = pcm_from_wav(args.wav or speech(args.text))
-    asyncio.run(run(pcm, args.port, args.out))
+    url, token = "ws://127.0.0.1:%d/device" % args.port, ""
+    if args.online:
+        saved = muse_online.load()
+        if not saved.get("url"):
+            sys.exit("no online server saved in %s" % muse_online.SERVER_FILE)
+        url, token = muse_online.device_url(saved["url"]), saved.get("token", "")
+    asyncio.run(run(pcm, url, token, args.out))
 
 
 if __name__ == "__main__":
