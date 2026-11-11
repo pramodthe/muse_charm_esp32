@@ -154,10 +154,11 @@ allowance):
    python3 companion/deploy_modal.py
    ```
 
-   It makes the token, stores the token and the keys from your `.env` (Deepgram, and Anthropic
-   if you have one for [background jobs](#background-jobs)) in Modal as the secret
-   `muse-companion`, deploys `companion/modal_app.py` and saves the server's address and the
-   token in `~/.config/muse/server.json` on your computer. Run it again after changing the
+   It takes the token from `MUSE_TOKEN` in your `.env` (or makes a random one and writes it
+   there), stores the token and the keys from `.env` (Deepgram, and Anthropic if you have one
+   for [background jobs](#background-jobs)) in Modal as the secret `muse-companion`, deploys
+   `companion/modal_app.py` and saves the server's address in `~/.config/muse/server.json` on
+   your computer. Run it again after changing the
    server's code, your key or your voice options.
 3. Try it without Muse: `python3 companion/test_voice.py --online "Hello Muse!"`.
 4. Tell Muse. With Muse on the same WiFi as your computer:
@@ -183,7 +184,7 @@ host's settings, and save `{"url": "wss://your-host/device", "token": "..."}` in
 
 What changes online: your voice travels from Muse to that host and on to Deepgram, and the host
 holds your Deepgram key, so use a host you trust. Anyone with the token can use the server, so
-keep `server.json` to yourself. To switch back, start the local server; a Muse that is already
+keep `.env` to yourself. To switch back, start the local server; a Muse that is already
 connected online notices it after a restart.
 
 ## Voice chat
@@ -290,18 +291,19 @@ python3 companion/muse_companion.py results
 
 It opens the app in your default browser, already signed in. That browser stays signed in, so
 bookmark the page; you do this once per browser. On a phone or another browser, open the same
-address and paste the token when it asks. This copies the token to the clipboard on macOS
-without showing it:
-
-```sh
-python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.config/muse/server.json')))['token'],end='')" | pbcopy
-```
+address and paste the token when it asks: it is `MUSE_TOKEN` in your `.env` file.
 
 **Why there is a sign-in.** An online server is on the public internet. Typing a request starts
 a research job that is billed to your Anthropic account, and Memory holds personal notes, so
-both are only for whoever has the token (the one `deploy_modal.py` made, kept in
-`~/.config/muse/server.json`). On your own computer, without an online server, there is no
-token and no sign-in.
+both are only for whoever has the token. On your own computer, without an online server, there
+is no token and no sign-in.
+
+**The token.** `MUSE_TOKEN` in `.env`, next to your keys, is the one password for the online
+server: Muse, the Claude Code hooks and the web app's sign-in all present it. The first deploy
+makes a random one and writes it there. To choose your own, put at least 16 characters without
+spaces after `MUSE_TOKEN=`, then run `python3 companion/deploy_modal.py` again, pair Muse again
+(`python3 companion/muse_companion.py pair`, step 4 of
+[the online setup](#without-your-computer-the-server-online)) and sign in again in the web app.
 
 **Reading without signing in.** Add `MUSE_RESULTS_PUBLIC=true` to `.env` and deploy again:
 anyone who has the server's address can then read your requests and write-ups. Asking, Memory
@@ -575,8 +577,9 @@ the scene, because the anchors are taken from them.
 - **A research job did not finish:** the web app says why under the request. A job is stopped
   after 12 minutes; other causes are an Anthropic account without credit or with web search
   turned off. `modal app logs muse-companion` shows the online server's log.
-- **The web app asks you to sign in:** open it with `python3 companion/muse_companion.py results`
-  from the repository's folder (see [The web app](#the-web-app)). "can't open file
+- **The web app asks you to sign in:** paste `MUSE_TOKEN` from your `.env` file, or open the app
+  with `python3 companion/muse_companion.py results` from the repository's folder (see
+  [The web app](#the-web-app)). "can't open file
   .../companion/muse_companion.py" means the Terminal is in another folder: `cd` to the
   repository first.
 - **The web app looks like an older version after a deploy:** reload the page without the

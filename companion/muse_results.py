@@ -14,8 +14,9 @@ Online, everything needs the server's token, except that MUSE_RESULTS_PUBLIC
 addresses). The page keeps the token in the browser: `muse_companion.py
 results` opens the page with the token after the "#" of the address (that part
 is never sent to a server), and the page stores it and removes it from the
-address bar. On your own computer, without a token, the page is open and only
-this computer may post.
+address bar. The token is MUSE_TOKEN in the repository's .env file. On your
+own computer, without a token, the page is open and only this computer may
+post.
 
 It is laid out as a chat, the way OpenMuse (https://github.com/CopilotKit/openmuse,
 MIT) is: Muse at the top, your requests on the right, Muse's answers on the
@@ -347,8 +348,8 @@ const minutes = s => s < 90 ? "about a minute" : Math.round(s / 60) + " minutes"
 
 function signIn(why) {
   return `<div class="signin"><h1>Sign in</h1><p class="lede">${why}</p>
-    <p>On your computer, <code>python3 companion/muse_companion.py results</code> opens this page signed in.
-    Or paste the token from <code>~/.config/muse/server.json</code>.</p>
+    <p>Paste your token: it is <code>MUSE_TOKEN</code> in the <code>.env</code> file of your Muse folder.
+    You only do this once in each browser.</p>
     <form class="addrow" id="signform"><input class="field" type="password" id="tok" aria-label="Token" autocomplete="off" placeholder="Token">
     <button class="solid">Sign in</button></form><p class="status bad" id="signnote" aria-live="polite"></p></div>`;
 }

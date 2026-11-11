@@ -50,3 +50,22 @@ def _file():
 def get(name):
     """The value of `name`: from the environment, else from .env, else ""."""
     return (os.environ.get(name) or "").strip() or _file().get(name, "")
+
+
+def put(name, value):
+    """Write NAME=value into .env, replacing the line that sets it or adding one.
+    The file is made if it is missing, readable by you only."""
+    try:
+        with open(ENV_FILE) as f:
+            lines = f.read().splitlines()
+    except OSError:
+        lines = []
+    line, done = "%s=%s" % (name, value), False
+    for i, old in enumerate(lines):
+        if old.split("=", 1)[0].replace("export ", "", 1).strip() == name and not old.lstrip().startswith("#"):
+            lines[i], done = line, True
+    if not done:
+        lines += ([""] if lines and lines[-1].strip() else []) + [line]
+    with open(os.open(ENV_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+        f.write("\n".join(lines) + "\n")
+    _cache.update(mtime=None, values={})

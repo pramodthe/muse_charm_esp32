@@ -1,30 +1,40 @@
 # SPDX-License-Identifier: MIT
 """Where the online companion server is, for the tools on this computer.
 
-~/.config/muse/server.json holds its address and the password ("token") Muse
-and the Claude Code hooks present to it:
+The password ("token") that Muse, the Claude Code hooks and the web app's
+sign-in present to it is MUSE_TOKEN in the repository's .env file, next to
+your keys. ~/.config/muse/server.json holds the server's address (and a copy of
+the token, which is used when .env has none):
 
     {"url": "wss://your-app.example.com/device", "token": "..."}
 
-deploy_modal.py writes this file. It never goes into the repository.
+deploy_modal.py writes both. Neither goes into the repository.
 """
 
 import json
 import os
 import secrets
 
+import muse_env
+
+TOKEN_MIN = 16
+
 CONFIG_DIR = os.path.expanduser("~/.config/muse")
 SERVER_FILE = os.path.join(CONFIG_DIR, "server.json")
 
 
 def load():
-    """The saved settings ({} if there are none)."""
+    """The saved settings ({} if there are none). The token is the one in .env
+    when there is one."""
     try:
         with open(SERVER_FILE) as f:
             data = json.load(f)
-        return data if isinstance(data, dict) else {}
+        data = data if isinstance(data, dict) else {}
     except (OSError, ValueError):
-        return {}
+        data = {}
+    if muse_env.get("MUSE_TOKEN"):
+        data["token"] = muse_env.get("MUSE_TOKEN")
+    return data
 
 
 def save(data):
@@ -37,11 +47,17 @@ def save(data):
 
 
 def token():
-    """The saved token, made (and saved) on first use."""
+    """The token: MUSE_TOKEN from .env, else the saved one, else a new one. It is
+    written to .env (so that is where you find it) and to server.json."""
     data = load()
     if not data.get("token"):
         data["token"] = secrets.token_urlsafe(24)
-        save(data)
+    if len(data["token"]) < TOKEN_MIN or any(c.isspace() for c in data["token"]):
+        raise SystemExit("MUSE_TOKEN in %s must be at least %d characters with no spaces: it is all that keeps "
+                         "strangers from using your server and your keys." % (muse_env.ENV_FILE, TOKEN_MIN))
+    save(data)
+    if muse_env.get("MUSE_TOKEN") != data["token"]:
+        muse_env.put("MUSE_TOKEN", data["token"])
     return data["token"]
 
 

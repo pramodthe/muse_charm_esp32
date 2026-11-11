@@ -12,6 +12,7 @@
 - The worker (`muse_worker.py`) is a [Deep Agent](https://github.com/langchain-ai/deepagents) running Claude with Anthropic's web search, started by `muse_jobs.py` as its own process. It needs an Anthropic API key (`~/.config/muse/anthropic_key`); `deploy_modal.py` hands it to Modal with the others.
 - **A results page** at `/results` on the server for reading the write-ups; `muse_companion.py results` opens it signed in.
 - `MUSE_RESULTS_PUBLIC=true` in `.env` lets the results page be read online without the token.
+- **The token is in `.env` too.** `MUSE_TOKEN` there is the online server's password, for Muse, the hooks and the web app's sign-in. A deploy writes the token it uses into `.env`, and you can choose your own (16 characters or more).
 - **Keys in `.env`.** `DEEPGRAM_API_KEY` and `ANTHROPIC_API_KEY` go in a `.env` file in the repository's folder (copy `.env.example`); it is in `.gitignore`. Keys saved in `~/.config/muse` by earlier versions still work.
 - A redeploy now turns Muse away from the old version for five minutes, since building the image with the worker's packages takes longer.
 
