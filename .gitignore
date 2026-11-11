@@ -10,6 +10,11 @@ build/
 *.blend1
 *.blend2
 
+# Your keys
+.env
+.env.*
+!.env.example
+
 # Editors and OS
 .vscode/
 .idea/

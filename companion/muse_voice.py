@@ -32,7 +32,8 @@ write-up) to a background job (muse_jobs.py); work_status says how that went.
 Muse's voice is the Deepgram voice raised in pitch (and a little faster), so
 it sounds like the same small creature that chirps.
 
-Key:      ~/.config/muse/deepgram_key, or the DEEPGRAM_API_KEY environment variable
+Key:      DEEPGRAM_API_KEY in the repository's .env file (muse_env.py) or in the
+          environment; the older ~/.config/muse/deepgram_key still works
 Options:  ~/.config/muse/voice.json (or the same JSON in MUSE_VOICE), for example
           {"voice": "aura-2-luna-en", "pitch": 1.25, "think_provider": "open_ai",
            "think_model": "gpt-4o-mini", "prompt": "You are Muse, ..."}
@@ -45,6 +46,7 @@ import os
 import sys
 import time
 
+import muse_env
 import muse_world
 import muse_ws as ws
 
@@ -277,17 +279,17 @@ class Pitch:
 
 def key_status():
     """(key, None) when a usable key is set up, else (None, what is wrong)."""
-    key = os.environ.get("DEEPGRAM_API_KEY", "").strip()
+    key, where = muse_env.get("DEEPGRAM_API_KEY"), "DEEPGRAM_API_KEY"
     if not key:
         try:
-            with open(KEY_FILE) as f:
-                key = f.read().strip()
+            with open(KEY_FILE) as f:    # where the key was kept before .env
+                key, where = f.read().strip(), KEY_FILE
         except OSError:
-            return None, "no Deepgram key: put it in " + KEY_FILE
+            pass
     if not key:
-        return None, KEY_FILE + " is empty"
+        return None, "no Deepgram key: put DEEPGRAM_API_KEY=... in " + muse_env.ENV_FILE
     if any(c.isspace() for c in key) or len(key) < 20:
-        return None, KEY_FILE + " does not look like a Deepgram key (it should hold just the key)"
+        return None, where + " does not look like a Deepgram key (it should hold just the key)"
     return key, None
 
 

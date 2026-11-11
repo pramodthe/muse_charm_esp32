@@ -36,7 +36,7 @@ def local_timezone():
 app = modal.App("muse-companion")
 image = modal.Image.debian_slim(python_version="3.12").pip_install(
     "tzdata", "deepagents", "langchain-anthropic").add_local_dir(
-    HERE, "/app", ignore=["__pycache__", "*.pyc", "*.wav"])
+    HERE, "/app", ignore=["__pycache__", "*.pyc", "*.wav", ".env*"])
 data = modal.Volume.from_name("muse-companion-data", create_if_missing=True)
 
 

@@ -7,9 +7,9 @@ computer.
     python3 companion/deploy_modal.py --code-only    after changing only the server's code
 
 Run it yourself, once (and again after changing a key or your voice options).
-It needs a Modal account you are logged in to (`modal setup`) and your
-Deepgram key in ~/.config/muse/deepgram_key. An Anthropic key in
-~/.config/muse/anthropic_key goes along too, for background jobs. It:
+It needs a Modal account you are logged in to (`modal setup`) and your keys
+in the repository's .env file: DEEPGRAM_API_KEY, and ANTHROPIC_API_KEY if you
+want background jobs. It:
 
   1. makes a random token (the password Muse and the Claude Code hooks present)
      and saves it in ~/.config/muse/server.json,
@@ -61,7 +61,7 @@ def main():
     if worker_key:
         values.append("ANTHROPIC_API_KEY=" + worker_key)
     else:
-        print("  (no Anthropic key in %s: Muse will not be able to do background jobs)" % muse_jobs.KEY_FILE)
+        print("  (no ANTHROPIC_API_KEY in .env: Muse will not be able to do background jobs)")
     if os.path.exists(muse_voice.OPTIONS_FILE):  # your voice, model and personality choices go along
         with open(muse_voice.OPTIONS_FILE) as f:
             values.append("MUSE_VOICE=" + " ".join(f.read().split()))

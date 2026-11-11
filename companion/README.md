@@ -31,6 +31,7 @@ Claude Code ──hooks (curl)──> muse_companion.py <──websocket──> 
 | `muse_worker.py` | One job, in its own process: a Deep Agent that searches the web and writes up what it finds |
 | `muse_results.py` | The `/results` page for reading the write-ups |
 | `muse_ws.py` | A small websocket implementation (server and client) |
+| `muse_env.py` | Reads your keys from the repository's `.env` file |
 | `install_hooks.py` | Adds or removes the Claude Code hooks |
 | `test_voice.py` | Plays Muse's part from your computer, to test voice chat without Muse |
 | `deploy_modal.py`, `modal_app.py` | Put the server online with Modal |
@@ -65,20 +66,17 @@ Claude Code ──hooks (curl)──> muse_companion.py <──websocket──> 
    `/usr/bin/python3` is allowed by default, while a Homebrew or python.org Python needs approving
    in System Settings → Network → Firewall → Options, again after each Python upgrade.
 
-3. For voice chat, save your [Deepgram](https://console.deepgram.com) key where the server looks
-   for it. This asks for the key and hides what you paste (zsh, the macOS default shell):
+3. For voice chat, put your [Deepgram](https://console.deepgram.com) key in the `.env` file in
+   the repository's folder:
 
    ```sh
-   mkdir -p ~/.config/muse
-   read -rs 'k?Paste your Deepgram key: ' && print -rn -- "$k" > ~/.config/muse/deepgram_key && unset k
-   chmod 600 ~/.config/muse/deepgram_key
+   cp .env.example .env && chmod 600 .env      # then paste the key after DEEPGRAM_API_KEY=
    ```
 
-   In bash, the second line is
-   `read -rsp 'Paste your Deepgram key: ' k && printf %s "$k" > ~/.config/muse/deepgram_key && unset k`.
    Or set `DEEPGRAM_API_KEY` in the server's environment. The server notices the key within a
-   few seconds; `curl http://127.0.0.1:8765/` then shows `"voice": "ready"`. The key stays in
-   that file: it is never sent to Muse. New to Deepgram? See
+   few seconds; `curl http://127.0.0.1:8765/` then shows `"voice": "ready"`. `.env` is in
+   `.gitignore`, and the key is never sent to Muse. `muse_env.py` reads the file; a variable set
+   in the environment wins over it. New to Deepgram? See
    [Setting up Deepgram](../README.md#setting-up-deepgram).
 
 4. For the Claude Code companion, add the hooks (your other settings and hooks are kept, and a
@@ -150,7 +148,7 @@ has Muse announce the summary (see [Speaking first](#speaking-first)).
 
 | | |
 | --- | --- |
-| Key | `~/.config/muse/anthropic_key`, or `ANTHROPIC_API_KEY` |
+| Key | `ANTHROPIC_API_KEY` in `.env`, or in the environment |
 | Python for the worker | This one if it has `deepagents`; otherwise `uv run --with deepagents --with langchain-anthropic`; or the one named in `MUSE_WORKER_PYTHON` |
 | Limits | 12 minutes a job, 2 at once, 8 web searches a job, the newest 30 kept |
 | Model | `worker_model` in `voice.json` (default `anthropic:claude-sonnet-5-5`) |
@@ -215,7 +213,7 @@ mono) and saves Muse's spoken reply to `reply.wav`.
   traffic between devices. Set the server address by hand in `idf.py menuconfig` → Muse charm →
   Claude Code companion, for example `ws://192.168.1.20:8765/device`.
 - **Muse shakes its head when you hold BOOT:** the server's output says why, for example a
-  missing or unusable key file, or an error from Deepgram.
+  missing or unusable key, or an error from Deepgram.
 - **The server logs nothing when Claude works.** Check that `~/.claude/settings.json` has the
   hooks (`install_hooks.py --print` shows what they look like) and that the session was started
   after installing them.

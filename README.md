@@ -154,8 +154,8 @@ allowance):
    python3 companion/deploy_modal.py
    ```
 
-   It makes the token, stores the token and your Deepgram key (and your Anthropic key, if you
-   have saved one for [background jobs](#background-jobs)) in Modal as the secret
+   It makes the token, stores the token and the keys from your `.env` (Deepgram, and Anthropic
+   if you have one for [background jobs](#background-jobs)) in Modal as the secret
    `muse-companion`, deploys `companion/modal_app.py` and saves the server's address and the
    token in `~/.config/muse/server.json` on your computer. Run it again after changing the
    server's code, your key or your voice options.
@@ -248,14 +248,8 @@ are kept.
 
 To set it up:
 
-1. Create an [Anthropic API key](https://console.anthropic.com) and save it where the server
-   looks for it (zsh; the paste is hidden):
-
-   ```sh
-   mkdir -p ~/.config/muse
-   read -rs 'k?Paste your Anthropic key: ' && print -rn -- "$k" > ~/.config/muse/anthropic_key && unset k
-   chmod 600 ~/.config/muse/anthropic_key
-   ```
+1. Create an [Anthropic API key](https://console.anthropic.com) and paste it into `.env`, after
+   `ANTHROPIC_API_KEY=` (see [Setting up Deepgram](#setting-up-deepgram) for the file).
 
 2. Online: run `python3 companion/deploy_modal.py` again, which hands the key to Modal with the
    others. On your computer: nothing more if [uv](https://docs.astral.sh/uv/) is installed (it
@@ -303,26 +297,25 @@ companion server does the rest.
    with Muse. After that, usage is billed per minute of conversation; see Deepgram's pricing page.
 2. In the console, open **API Keys** and create a key. Copy it straight away, as the console may
    not show it again.
-3. Save it on the computer that runs the companion server. This asks for the key and hides what
-   you paste (zsh, the macOS default shell):
+3. Put it in the `.env` file in the repository's folder, on the computer that runs the
+   companion server:
 
    ```sh
-   mkdir -p ~/.config/muse
-   read -rs 'k?Paste your Deepgram key: ' && print -rn -- "$k" > ~/.config/muse/deepgram_key && unset k
-   chmod 600 ~/.config/muse/deepgram_key
+   cp .env.example .env && chmod 600 .env
    ```
 
-   In bash (most Linux systems), the second line is
-   `read -rsp 'Paste your Deepgram key: ' k && printf %s "$k" > ~/.config/muse/deepgram_key && unset k`.
-   Or skip the file and set `DEEPGRAM_API_KEY` in the server's environment.
+   Open `.env` in an editor and paste the key after `DEEPGRAM_API_KEY=`. Or skip the file and
+   set `DEEPGRAM_API_KEY` in the server's environment.
 4. Check it: `curl http://127.0.0.1:8765/` shows `"voice": "ready"` within a few seconds (no
-   restart needed), or a message saying what is wrong with the key file. For a full round trip
+   restart needed), or a message saying what is wrong with the key. For a full round trip
    without Muse, run `python3 companion/test_voice.py "Hello Muse!"` and play `reply.wav`.
 
-**Where the key lives.** Only in `~/.config/muse/deepgram_key` on your computer, outside the
-repository, so git never sees it. It is never sent to Muse or stored on the board; the server
-uses it to talk to Deepgram. To change it, run step 3 again; to stop voice chat, delete the
-file; if you think it has leaked, revoke it in the Deepgram console. Anyone on your local network
+**Where the key lives.** Only in `.env` on your computer. The file is listed in `.gitignore`,
+so git never sees it (`.env.example`, without keys, is the one in the repository). The key is
+never sent to Muse or stored on the board; the server uses it to talk to Deepgram. To change
+it, edit `.env`; to stop voice chat, empty the line; if you think it has leaked, revoke it in
+the Deepgram console. A key saved by an earlier version in `~/.config/muse/deepgram_key` still
+works while `.env` has none. Anyone on your local network
 could talk through the server and spend your Deepgram credit (they can't read the key), so run
 it on networks you trust.
 
@@ -440,6 +433,7 @@ capped at 14 dBm, and `panel.c` rewrites the panel's settings every few seconds.
 ## Repository layout
 
 ```
+.env.example           your keys go in a copy of this, named .env (never committed)
 firmware/              ESP-IDF project
   main/
     main.c             start-up
@@ -469,6 +463,7 @@ companion/             runs on your computer
   muse_worker.py       one job: a Deep Agent that researches and writes up
   muse_results.py      the page where you read the write-ups
   muse_ws.py           small websocket implementation
+  muse_env.py          reads your keys from .env
   install_hooks.py     adds or removes the Claude Code hooks
   test_voice.py        tests voice chat without Muse
   deploy_modal.py      puts the server online with Modal
@@ -524,7 +519,7 @@ the scene, because the anchors are taken from them.
   "401" (pair again, the token changed), or no answer (the host is down). Check the server with
   `python3 companion/test_voice.py --online`.
 - **Muse shakes its head when you hold BOOT:** voice chat couldn't start. The server's output says
-  why: no key or an unusable key file, or an error from Deepgram (for example an invalid voice
+  why: no key or an unusable key, or an error from Deepgram (for example an invalid voice
   name).
 - **Muse answers before you finish:** Deepgram ends the turn at a long pause. Keep talking, or
   press BOOT again to add more.

@@ -11,7 +11,7 @@ beacon, and Muse connects to ws://<this computer>:8765/device.
 
 Voice chat goes through the same connection: Muse streams its microphone here
 and this server talks to the Deepgram Voice Agent API (muse_voice.py), so the
-Deepgram key stays on this computer (~/.config/muse/deepgram_key).
+Deepgram key stays on this computer (in the repository's .env file).
 
     python3 muse_companion.py          run the server
     python3 muse_companion.py demo     play a made-up Claude Code session

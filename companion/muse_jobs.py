@@ -12,8 +12,8 @@ Jobs are kept as JSON files in jobs/ under ~/.config/muse (or MUSE_DATA_DIR):
 {"id", "title", "task", "status": "running|done|failed", "created",
  "summary", "report", "error", "took_s"}.
 
-The worker needs an Anthropic key: ~/.config/muse/anthropic_key, or the
-ANTHROPIC_API_KEY environment variable. It runs with this Python if the
+The worker needs an Anthropic key: ANTHROPIC_API_KEY in the repository's .env
+file (muse_env.py) or in the environment. It runs with this Python if the
 deepagents package is installed for it, or else through uv, which fetches the
 packages by itself. MUSE_WORKER_PYTHON names another Python to use.
 """
@@ -26,6 +26,8 @@ import secrets
 import shutil
 import sys
 import time
+
+import muse_env
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.environ.get("MUSE_DATA_DIR") or os.path.expanduser("~/.config/muse")
@@ -45,8 +47,8 @@ def log(*a):
 
 
 def anthropic_key():
-    key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
-    if not key:
+    key = muse_env.get("ANTHROPIC_API_KEY")
+    if not key:                      # where the key was kept before .env
         try:
             with open(KEY_FILE) as f:
                 key = f.read().strip()
@@ -103,7 +105,7 @@ class Jobs:
     def problem(self):
         """Why a job cannot be started right now, or None."""
         if not os.environ.get("MUSE_WORKER_FAKE") and not anthropic_key():
-            return "background research is not set up yet: the Anthropic key is missing (%s)" % KEY_FILE
+            return "background research is not set up yet: ANTHROPIC_API_KEY is missing from .env"
         if not worker_command():
             return "background research is not set up yet: pip install " + " ".join(PACKAGES)
         if len(self.running) >= AT_ONCE:
