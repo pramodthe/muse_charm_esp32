@@ -156,7 +156,8 @@ has Muse announce the summary (see [Speaking first](#speaking-first)).
 
 The write-ups are read at `/results` on the server (`muse_companion.py results` opens it). The
 page itself holds no data; it fetches `/results.json` and `/results/<id>.json`, which need the
-token online. The command passes the token after the `#` of the address, which browsers do not
+token online. `MUSE_RESULTS_PUBLIC=true` in `.env` (then deploy again) drops that: anyone who has
+the server's address can then read your write-ups, so leave it off if they might be private. The command passes the token after the `#` of the address, which browsers do not
 send to servers, and the page keeps it in the browser's storage.
 
 ## Speaking first

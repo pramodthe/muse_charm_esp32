@@ -5,7 +5,9 @@
     GET /results.json         the jobs, newest first, without their write-ups
     GET /results/<id>.json    one job with its write-up
 
-Online, the two JSON addresses need the server's token. The page keeps the
+Online, the two JSON addresses need the server's token, unless
+MUSE_RESULTS_PUBLIC is "true" (then anyone who has the address can read them).
+The page keeps the
 token in the browser: `muse_companion.py results` opens the page with the
 token after the "#" of the address (that part is never sent to a server), and
 the page stores it and removes it from the address bar.

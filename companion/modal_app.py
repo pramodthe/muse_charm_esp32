@@ -17,6 +17,7 @@ The time zone is taken from the computer that deploys this.
 
 import os
 import subprocess
+import sys
 
 import modal
 
@@ -33,6 +34,16 @@ def local_timezone():
     return path.split("zoneinfo/", 1)[1] if "zoneinfo/" in path else ""
 
 
+def local_option(name):
+    """A setting from this computer's .env or environment, read when deploying."""
+    try:
+        sys.path.insert(0, HERE)
+        import muse_env
+        return muse_env.get(name)
+    except ImportError:   # inside the container: the value was fixed at deploy time
+        return os.environ.get(name, "")
+
+
 app = modal.App("muse-companion")
 image = modal.Image.debian_slim(python_version="3.12").pip_install(
     "tzdata", "deepagents", "langchain-anthropic").add_local_dir(
@@ -44,7 +55,8 @@ data = modal.Volume.from_name("muse-companion-data", create_if_missing=True)
     image=image,
     secrets=[
         modal.Secret.from_name("muse-companion"),  # DEEPGRAM_API_KEY, MUSE_TOKEN, ANTHROPIC_API_KEY
-        modal.Secret.from_dict({"MUSE_TZ": local_timezone(), "MUSE_DATA_DIR": "/data"}),
+        modal.Secret.from_dict({"MUSE_TZ": local_timezone(), "MUSE_DATA_DIR": "/data",
+                                "MUSE_RESULTS_PUBLIC": local_option("MUSE_RESULTS_PUBLIC")}),
     ],
     volumes={"/data": data},
     max_containers=1,       # Muse and the Claude Code hooks must reach the same server

@@ -258,6 +258,8 @@ To set it up:
    `MUSE_WORKER_PYTHON`.
 3. Read the results: `python3 companion/muse_companion.py results` opens the page in your
    browser, signed in. Bookmark it; it works on your phone too once you paste the token there.
+   To skip the token, add `MUSE_RESULTS_PUBLIC=true` to `.env` and deploy again; anyone who has
+   the server's address can then read your write-ups.
 
 A research job uses far more of the model than a spoken reply, and it is billed to your
 Anthropic account. `worker_model` in `voice.json` chooses the model.

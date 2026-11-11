@@ -5,6 +5,7 @@
 - **Background jobs.** Ask Muse for something bigger ("research the best budget 3D printers") and it says it is on it, a worker searches the web and writes up what it finds, and a few minutes later Muse tells you the answer in a sentence. The AI's new tools are `work_on` and `work_status`.
 - The worker (`muse_worker.py`) is a [Deep Agent](https://github.com/langchain-ai/deepagents) running Claude with Anthropic's web search, started by `muse_jobs.py` as its own process. It needs an Anthropic API key (`~/.config/muse/anthropic_key`); `deploy_modal.py` hands it to Modal with the others.
 - **A results page** at `/results` on the server for reading the write-ups; `muse_companion.py results` opens it signed in.
+- `MUSE_RESULTS_PUBLIC=true` in `.env` lets the results page be read online without the token.
 - **Keys in `.env`.** `DEEPGRAM_API_KEY` and `ANTHROPIC_API_KEY` go in a `.env` file in the repository's folder (copy `.env.example`); it is in `.gitignore`. Keys saved in `~/.config/muse` by earlier versions still work.
 - A redeploy now turns Muse away from the old version for five minutes, since building the image with the worker's packages takes longer.
 

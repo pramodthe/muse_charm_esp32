@@ -154,6 +154,8 @@ class Hub:
         self.battery_told = 100   # the battery level Muse last warned about (100: not yet)
         self.jobs = muse_jobs.Jobs(self.on_job_done)   # background work (muse_worker.py)
         self.retired_until = 0.0  # online: a new version is taking over; turn devices away until then
+        # Online: let anyone who has the address read the results page without the token.
+        self.results_public = os.environ.get("MUSE_RESULTS_PUBLIC", "").strip().lower() in ("1", "true", "yes", "on")
         self.sent = None      # last mood message, re-sent to new devices
 
     # ------------------------------------------------------------ hook events
@@ -547,7 +549,7 @@ async def handle(hub, reader, writer):
             respond(writer, "200 OK", muse_results.PAGE.encode(), "text/html; charset=utf-8")
             return
         if method == "GET" and path.startswith("/results") and path.endswith(".json"):
-            if hub.token and not authorized(hub, headers):
+            if hub.token and not hub.results_public and not authorized(hub, headers):
                 respond(writer, "401 Unauthorized")
                 return
             if path == "/results.json":
