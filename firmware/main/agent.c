@@ -163,7 +163,7 @@ void agent_on_voice_ready(bool on)
     if (state == MUSE_AGENT_OFF || state == MUSE_AGENT_IDLE) {
         set_state(on ? MUSE_AGENT_IDLE : MUSE_AGENT_OFF);
     }
-    ESP_LOGI(TAG, "voice chat %s", on ? "ready: hold the screen to talk"
+    ESP_LOGI(TAG, "voice chat %s", on ? "ready: hold BOOT to talk"
                                       : "off: put a Deepgram key on the computer (see companion/README.md)");
 }
 
