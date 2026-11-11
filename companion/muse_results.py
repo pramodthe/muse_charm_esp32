@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Muse's web app: read what Muse found, hand it something new, see how it is.
+"""Muse's web app: a conversation with Muse about the bigger things you hand it.
 
     GET  /results             the app (one page; it holds no data itself)
     GET  /results.json        the jobs, newest first, without their write-ups
@@ -7,6 +7,7 @@
     GET  /app.json            Muse's state, timers and memory
     POST /ask                 {"task": "..."} starts a background job
     POST /memory              {"add": "..."} or {"forget": "..."}
+    GET  /avatar.png          your own picture for Muse, if companion/avatar.png exists
 
 Online, everything needs the server's token, except that MUSE_RESULTS_PUBLIC
 "true" lets anyone who has the address read the jobs (the two /results
@@ -16,10 +17,10 @@ is never sent to a server), and the page stores it and removes it from the
 address bar. On your own computer, without a token, the page is open and only
 this computer may post.
 
-Three views: Activity (each request, what Muse said, the write-up to read),
-Ideas (things to hand over and things to say out loud) and Memory (what Muse
-remembers about you). A request is shown as a highlighted line, the way you
-would mark it on paper; Muse's answers are plain text beneath it.
+It is laid out as a chat, the way personal-agent apps such as OpenMuse
+(https://github.com/CopilotKit/openmuse) are: your requests on the right,
+Muse's answers on the left with a card for each write-up, a message box at the
+bottom. Two more tabs hold ideas to start from and what Muse remembers.
 """
 
 PAGE = r"""<!doctype html>
@@ -28,160 +29,209 @@ PAGE = r"""<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
-<meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#171a1c" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f6f7f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#101415" media="(prefers-color-scheme: dark)">
 <title>Muse</title>
 <style>
   :root {
-    --paper: #fbfbfa; --panel: #f1f2ef; --ink: #1d2125; --soft: #5e666e; --line: #e1e3df;
-    --mark: #ffe066; --mark-ink: #1d2125; --act: #0e6e6a; --act-ink: #ffffff; --bad: #b42318;
-    --ui: ui-rounded, "SF Pro Rounded", "Nunito", "Varela Round", system-ui, -apple-system, "Segoe UI", sans-serif;
-    --read: "Iowan Old Style", "Charter", "New York", ui-serif, Georgia, "Times New Roman", serif;
+    --canvas: #f6f7f7; --card: #ffffff; --text: #131a1c; --muted: #677177; --line: #e6e9e9;
+    --theirs: #eceeef; --mine: #d3f1e8; --brand: #0f766e; --brand-ink: #ffffff; --tile: #e1f3ef;
+    --danger: #b3261e; --danger-bg: #fcedec; --ok: #1f9d6b; --shade: rgba(19, 26, 28, 0.36);
+    --lift: 0 1px 2px rgba(19, 26, 28, 0.05), 0 8px 28px rgba(19, 26, 28, 0.07);
   }
   @media (prefers-color-scheme: dark) {
-    :root { --paper: #171a1c; --panel: #1f2326; --ink: #eceeea; --soft: #9aa3a8; --line: #2c3236;
-            --mark: #f2ce4a; --mark-ink: #1d2125; --act: #63cbc3; --act-ink: #10201f; --bad: #ff8a80; }
+    :root { --canvas: #101415; --card: #1a2022; --text: #eef1f1; --muted: #98a2a6; --line: #2a3134;
+            --theirs: #232a2d; --mine: #14534c; --brand: #4fd1c5; --brand-ink: #062b28; --tile: #173b37;
+            --danger: #ff9b93; --danger-bg: #3a1f1d; --ok: #5fd39e; --shade: rgba(0, 0, 0, 0.6);
+            --lift: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 28px rgba(0, 0, 0, 0.35); }
   }
   * { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
-  body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.5 var(--ui); }
+  body { margin: 0; background: var(--canvas); color: var(--text);
+         font: 15.5px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif; }
   button, input, textarea { font: inherit; color: inherit; }
-  button { cursor: pointer; }
-  :focus-visible { outline: 2px solid var(--act); outline-offset: 2px; border-radius: 4px; }
+  button { cursor: pointer; border: 0; background: none; padding: 0; }
+  svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round;
+        stroke-linejoin: round; flex: none; }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
   [hidden] { display: none !important; }
+  .app { max-width: 760px; margin: 0 auto; min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; }
 
-  /* frame: a rail and one reading column */
-  .frame { display: grid; grid-template-columns: 232px minmax(0, 1fr); min-height: 100vh; min-height: 100dvh; }
-  .rail { background: var(--panel); padding: 28px 20px 20px; display: flex; flex-direction: column; gap: 28px;
-          position: sticky; top: 0; height: 100vh; height: 100dvh; }
-  .word { font-size: 30px; font-weight: 800; letter-spacing: -0.03em; line-height: 1; margin: 0; }
-  .how { font-size: 14px; color: var(--soft); margin: 10px 0 0; }
-  .how b { color: var(--ink); font-weight: 600; }
-  .how span { display: block; }
-  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--soft); margin-right: 7px; }
-  .dot.on { background: var(--act); }
-  .tabs { display: flex; flex-direction: column; gap: 2px; }
-  .tabs button { background: none; border: 0; text-align: left; padding: 9px 12px; border-radius: 10px;
-                 font-weight: 600; color: var(--soft); }
-  .tabs button[aria-current="page"] { background: var(--paper); color: var(--ink); }
-  .rail .foot { margin-top: auto; font-size: 14px; }
-  .link { background: none; border: 0; padding: 0; color: var(--act); font-weight: 600; text-decoration: underline;
-          text-underline-offset: 3px; }
-  main { padding: 36px 48px 0; display: flex; flex-direction: column; min-width: 0; }
-  .col { width: 100%; max-width: 660px; }
-  h1 { font-size: 24px; letter-spacing: -0.02em; line-height: 1.2; margin: 0 0 6px; }
-  .lede { color: var(--soft); margin: 0 0 28px; max-width: 56ch; }
+  /* top bar: who you are talking to, and the tabs */
+  .bar { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 12px; padding: 14px 20px;
+         background: color-mix(in srgb, var(--canvas) 88%, transparent); -webkit-backdrop-filter: blur(14px);
+         backdrop-filter: blur(14px); }
+  .face { position: relative; width: 46px; height: 46px; flex: none; }
+  .face img, .face b { width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center;
+                       background: var(--tile); color: var(--brand); font-size: 21px; font-weight: 700; object-fit: cover; }
+  .face i { position: absolute; right: 0; bottom: 0; width: 13px; height: 13px; border-radius: 50%;
+            background: var(--muted); border: 2.5px solid var(--canvas); }
+  .face i.on { background: var(--ok); }
+  .who { min-width: 0; flex: 1; }
+  .who strong { display: block; font-size: 17px; letter-spacing: -0.01em; line-height: 1.2; }
+  .who span { display: block; font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tabs { display: flex; gap: 2px; background: var(--theirs); padding: 4px; border-radius: 999px; }
+  .tabs button { display: flex; align-items: center; gap: 7px; padding: 7px 14px; border-radius: 999px; font-weight: 600;
+                 font-size: 14px; color: var(--muted); }
+  .tabs button svg { width: 17px; height: 17px; }
+  .tabs button[aria-current="page"] { background: var(--card); color: var(--text); box-shadow: 0 1px 2px rgba(19, 26, 28, 0.08); }
 
-  /* activity */
-  .feed { flex: 1; padding-bottom: 24px; }
-  .day { font-size: 14px; color: var(--soft); margin: 28px 0 14px; font-weight: 600; }
-  .day:first-child { margin-top: 0; }
-  .job { margin: 0 0 30px; }
-  .ask { margin: 0; font-size: 19px; line-height: 1.55; font-weight: 600; overflow-wrap: anywhere; }
-  .ask span { background: linear-gradient(transparent 10%, var(--mark) 10% 90%, transparent 90%); color: var(--mark-ink);
-              padding: 0 5px; margin: 0 -5px; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
-  .when { font-size: 13px; color: var(--soft); margin: 4px 0 10px; }
-  .said { margin: 0 0 10px; max-width: 58ch; overflow-wrap: anywhere; }
-  .busy { color: var(--soft); display: flex; align-items: center; gap: 10px; margin: 0; }
-  .breath { width: 12px; height: 12px; border-radius: 50%; background: var(--act); flex: none;
-            animation: breathe 3.2s ease-in-out infinite; }
-  @keyframes breathe { 0%, 100% { transform: scale(0.6); opacity: 0.45; } 50% { transform: scale(1); opacity: 1; } }
-  @media (prefers-reduced-motion: reduce) { .breath { animation: none; } }
-  .bad { color: var(--bad); }
-  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
-  .btn { border: 1.5px solid var(--ink); background: none; border-radius: 999px; padding: 7px 16px; font-weight: 700; }
-  .btn.go { background: var(--act); border-color: var(--act); color: var(--act-ink); }
-  .btn:disabled { opacity: 0.45; cursor: default; }
-  .note { font-size: 13px; color: var(--soft); }
-  .empty { color: var(--soft); max-width: 50ch; }
+  main { flex: 1; padding: 8px 20px 20px; min-width: 0; }
+  h1 { font-size: 22px; letter-spacing: -0.02em; margin: 14px 0 4px; }
+  h2 { font-size: 14px; color: var(--muted); font-weight: 600; margin: 26px 4px 8px; }
+  .lede { color: var(--muted); margin: 0 0 6px; max-width: 54ch; }
 
-  /* composer */
-  .compose { position: sticky; bottom: 0; background: var(--paper); padding: 12px 0 22px; border-top: 1px solid var(--line); }
-  .compose form { display: flex; gap: 10px; align-items: flex-end; }
-  .compose textarea { flex: 1; min-width: 0; resize: none; border: 1.5px solid var(--line); border-radius: 16px;
-                      background: var(--paper); padding: 10px 14px; line-height: 1.4; max-height: 9em; }
-  .compose textarea:focus { border-color: var(--act); outline: none; }
-  .compose .note { margin: 8px 2px 0; }
+  /* the conversation */
+  .day { text-align: center; margin: 22px 0 14px; }
+  .day span { font-size: 12px; font-weight: 600; color: var(--muted); background: var(--theirs); padding: 4px 12px; border-radius: 999px; }
+  .msg { display: flex; flex-direction: column; margin: 6px 0; }
+  .msg.me { align-items: flex-end; margin-top: 18px; }
+  .msg.muse { align-items: flex-start; }
+  .bubble { padding: 11px 16px; border-radius: 22px; overflow-wrap: anywhere; max-width: 88%; }
+  .me .bubble { background: var(--mine); border-bottom-right-radius: 8px; }
+  .muse .bubble { background: var(--theirs); border-bottom-left-radius: 8px; }
+  .bubble.bad { background: var(--danger-bg); color: var(--danger); }
+  .time { font-size: 11.5px; color: var(--muted); margin: 4px 6px 0; }
+  .doing { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 14px; margin: 8px 6px; }
+  .doing svg { width: 17px; height: 17px; }
+  .dots { display: inline-flex; gap: 4px; padding: 15px 16px; }
+  .dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: hop 1.3s ease-in-out infinite; }
+  .dots i:nth-child(2) { animation-delay: 0.16s; } .dots i:nth-child(3) { animation-delay: 0.32s; }
+  @keyframes hop { 0%, 60%, 100% { transform: translateY(0); opacity: 0.45; } 30% { transform: translateY(-5px); opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .dots i { animation: none; } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 22px; padding: 16px; width: min(100%, 440px);
+          margin-top: 6px; }
+  .card .head { display: flex; gap: 12px; align-items: center; }
+  .tile { width: 42px; height: 42px; border-radius: 13px; background: var(--tile); color: var(--brand); display: grid;
+          place-items: center; flex: none; }
+  .card .head strong { display: block; line-height: 1.3; overflow-wrap: anywhere; }
+  .card .head span { font-size: 12.5px; color: var(--muted); }
+  .wide { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; margin-top: 14px; padding: 10px;
+          border-radius: 14px; background: var(--theirs); font-weight: 600; font-size: 14.5px; }
+  .wide:hover { background: var(--tile); }
+  .chip { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; padding: 7px 14px; border-radius: 999px;
+          background: var(--card); border: 1px solid var(--line); font-weight: 600; font-size: 14px; }
+  .welcome { text-align: center; padding: 9vh 10px 20px; }
+  .welcome .tile { width: 60px; height: 60px; border-radius: 20px; margin: 0 auto 16px; }
+  .welcome .tile svg { width: 28px; height: 28px; }
+  .welcome h1 { margin: 0 0 6px; }
+  .welcome p { color: var(--muted); max-width: 40ch; margin: 0 auto 16px; }
+  .starters { display: flex; flex-direction: column; gap: 8px; max-width: 400px; margin: 0 auto; }
+  .starters button { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 11px 14px; text-align: left; }
+  .link { color: var(--brand); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+
+  /* the message box */
+  .compose { position: sticky; bottom: 0; z-index: 2; padding: 6px 20px 18px;
+             background: linear-gradient(to bottom, transparent, var(--canvas) 26%); }
+  .box { display: flex; align-items: flex-end; gap: 8px; background: var(--card); border: 1px solid var(--line);
+         border-radius: 28px; padding: 7px 7px 7px 18px; box-shadow: var(--lift); }
+  .box:focus-within { border-color: var(--brand); }
+  .box textarea { flex: 1; min-width: 0; border: 0; outline: 0; background: none; resize: none; padding: 8px 0; line-height: 1.4;
+                  max-height: 8.6em; }
+  .send { width: 40px; height: 40px; border-radius: 50%; background: var(--brand); color: var(--brand-ink); display: grid;
+          place-items: center; flex: none; }
+  .send:disabled { background: var(--theirs); color: var(--muted); cursor: default; }
+  .compose .hint { font-size: 12.5px; color: var(--muted); margin: 8px 12px 0; text-align: center; min-height: 1em; }
+
+  /* lists: ideas and memory */
+  .group { background: var(--card); border: 1px solid var(--line); border-radius: 22px; overflow: hidden; }
+  .item { display: flex; align-items: center; gap: 13px; width: 100%; padding: 13px 16px; text-align: left;
+          border-top: 1px solid var(--line); }
+  .item:first-child { border-top: 0; }
+  button.item:hover { background: var(--canvas); }
+  .item .words { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .item .words b { display: block; font-weight: 600; }
+  .item .words span { color: var(--muted); font-size: 13.5px; }
+  .item > svg { color: var(--muted); width: 18px; height: 18px; }
+  .item .tile { width: 38px; height: 38px; border-radius: 12px; }
+  .round { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); flex: none; }
+  .round:hover { background: var(--danger-bg); color: var(--danger); }
+  .round svg { width: 17px; height: 17px; }
+  .addrow { display: flex; gap: 8px; margin: 14px 0 6px; }
+  .field { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 999px; background: var(--card); padding: 10px 16px; }
+  .field:focus { border-color: var(--brand); outline: none; }
+  .solid { background: var(--brand); color: var(--brand-ink); border-radius: 999px; padding: 10px 18px; font-weight: 600; }
+  .status { font-size: 13px; color: var(--muted); margin: 6px 6px 10px; min-height: 1.2em; }
+  .status.bad { color: var(--danger); }
+  .empty { color: var(--muted); text-align: center; padding: 26px 20px; }
+  .signin { background: var(--card); border: 1px solid var(--line); border-radius: 24px; padding: 24px; margin: 8vh auto 0; max-width: 440px; }
+  .signin h1 { margin-top: 0; }
+  code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.86em; background: var(--theirs); padding: 1px 5px; border-radius: 5px; }
 
   /* reading a write-up */
-  .back { margin: 0 0 22px; }
-  .reading { font-family: var(--read); font-size: 18px; line-height: 1.62; overflow-wrap: anywhere; padding-bottom: 48px; }
-  .reading h1 { font-family: var(--ui); font-size: 28px; line-height: 1.18; margin: 26px 0 14px; }
-  .reading h2 { font-family: var(--ui); font-size: 19px; margin: 30px 0 6px; letter-spacing: -0.01em; }
-  .reading h3 { font-family: var(--ui); font-size: 16px; margin: 22px 0 4px; }
+  .shade { position: fixed; inset: 0; z-index: 10; background: var(--shade); display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .sheet { background: var(--card); border-radius: 26px; width: 100%; max-width: 720px; max-height: 100%; display: flex;
+           flex-direction: column; overflow: hidden; box-shadow: var(--lift); }
+  .sheet header { display: flex; align-items: flex-start; gap: 12px; padding: 18px 16px 14px 24px; border-bottom: 1px solid var(--line); }
+  .sheet header div { flex: 1; min-width: 0; }
+  .sheet header strong { display: block; font-size: 16px; line-height: 1.35; overflow-wrap: anywhere; }
+  .sheet header span { font-size: 12.5px; color: var(--muted); }
+  .sheet .close { width: 38px; height: 38px; border-radius: 50%; background: var(--theirs); display: grid; place-items: center; flex: none; }
+  .reading { overflow-y: auto; padding: 6px 24px 30px; font-size: 16.5px; line-height: 1.65; overflow-wrap: anywhere; }
+  .reading h1 { font-size: 25px; line-height: 1.2; margin: 20px 0 12px; }
+  .reading h2 { font-size: 18px; color: var(--text); margin: 28px 0 6px; letter-spacing: -0.01em; }
+  .reading h3 { font-size: 16px; margin: 20px 0 4px; }
   .reading p, .reading ul, .reading ol { margin: 10px 0; }
-  .reading li { margin: 4px 0; }
-  .reading a { color: var(--act); text-underline-offset: 3px; }
-  .reading code { font-size: 0.86em; background: var(--panel); padding: 1px 5px; border-radius: 5px; }
-  .reading hr { border: 0; border-top: 1px solid var(--line); margin: 26px 0; }
-  .scroll { overflow-x: auto; margin: 14px 0; }
-  table { border-collapse: collapse; font: 15px/1.4 var(--ui); }
-  th, td { border-bottom: 1px solid var(--line); padding: 8px 16px 8px 0; text-align: left; vertical-align: top;
-           overflow-wrap: normal; min-width: 5.5em; }
-  th { font-weight: 700; border-bottom: 1.5px solid var(--ink); }
+  .reading ul, .reading ol { padding-left: 22px; }
+  .reading li { margin: 5px 0; }
+  .reading a { color: var(--brand); text-underline-offset: 3px; }
+  .reading hr { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
+  .scroll { overflow-x: auto; margin: 14px 0; border: 1px solid var(--line); border-radius: 14px; }
+  table { border-collapse: collapse; font-size: 14.5px; line-height: 1.4; width: 100%; }
+  th, td { padding: 9px 14px; text-align: left; vertical-align: top; overflow-wrap: normal; min-width: 5.5em; border-top: 1px solid var(--line); }
+  th { font-weight: 600; background: var(--canvas); border-top: 0; }
 
-  /* ideas and memory */
-  .list { list-style: none; margin: 0 0 34px; padding: 0; border-top: 1px solid var(--line); }
-  .list li { border-bottom: 1px solid var(--line); }
-  .idea { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 13px 0; font-weight: 600; }
-  .idea:hover { color: var(--act); }
-  h2 { font-size: 17px; margin: 0 0 10px; letter-spacing: -0.01em; }
-  .say { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 4px 20px; padding: 11px 0; }
-  .say q { font-weight: 600; quotes: "\201C" "\201D"; }
-  .say span { color: var(--soft); }
-  .mem { display: flex; gap: 12px; align-items: baseline; justify-content: space-between; padding: 12px 0; }
-  .mem span { overflow-wrap: anywhere; }
-  .add { display: flex; gap: 10px; margin: 0 0 12px; }
-  .add input, .sign input { flex: 1; min-width: 0; border: 1.5px solid var(--line); border-radius: 999px;
-                            background: var(--paper); padding: 9px 16px; }
-  .add input:focus, .sign input:focus { border-color: var(--act); outline: none; }
-  .sign { display: flex; gap: 10px; flex-wrap: wrap; margin: 14px 0 8px; max-width: 460px; }
-  code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.88em; }
-
-  @media (max-width: 760px) {
-    .frame { display: block; }
-    .rail { position: static; height: auto; flex-direction: row; align-items: center; gap: 14px; padding: 14px 16px; }
-    .word { font-size: 24px; }
-    .how { margin: 0; flex: 1; min-width: 0; text-align: right; }
-    .how span { display: inline; }
-    .how .extra { display: none; }
-    .rail .foot { display: none; }
-    .tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 2; flex-direction: row; background: var(--panel);
-            padding: 6px 10px calc(6px + env(safe-area-inset-bottom)); gap: 6px; }
-    .tabs button { flex: 1; text-align: center; padding: 10px 4px; }
-    main { padding: 22px 16px 0; min-height: calc(100dvh - 60px); }
-    .compose { bottom: calc(52px + env(safe-area-inset-bottom)); padding-bottom: 12px; }
-    body { padding-bottom: calc(56px + env(safe-area-inset-bottom)); }
-    .say { grid-template-columns: 1fr; }
-    .reading { font-size: 17px; }
+  /* phones: tabs move to the bottom */
+  .dock { display: none; }
+  @media (max-width: 700px) {
+    .bar { padding: 12px 16px; }
+    .bar .tabs { display: none; }
+    main { padding: 4px 14px 16px; }
+    .dock { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 4; background: var(--card);
+            border-top: 1px solid var(--line); padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); }
+    .dock button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 4px;
+                   font-size: 11.5px; font-weight: 600; color: var(--muted); border-radius: 12px; }
+    .dock button[aria-current="page"] { color: var(--brand); }
+    .app { padding-bottom: calc(58px + env(safe-area-inset-bottom)); }
+    .compose { bottom: calc(58px + env(safe-area-inset-bottom)); padding: 6px 14px 10px; }
+    .bubble { max-width: 92%; }
+    .shade { padding: 0; align-items: stretch; }
+    .sheet { border-radius: 0; max-width: none; }
+    .reading { padding: 4px 18px 30px; }
+    .sheet header { padding-left: 18px; }
   }
 </style>
 </head>
 <body>
-<div class="frame">
-  <aside class="rail">
-    <div>
-      <p class="word">muse</p>
-    </div>
-    <p class="how" id="how" aria-live="polite"></p>
-    <nav class="tabs" aria-label="Sections">
-      <button data-go="activity">Activity</button>
-      <button data-go="ideas">Ideas</button>
-      <button data-go="memory">Memory</button>
-    </nav>
-    <p class="foot" id="foot"></p>
-  </aside>
-  <main>
-    <div class="col feed" id="view"></div>
-    <div class="col compose" id="compose" hidden>
-      <form id="askform">
-        <textarea id="task" rows="1" aria-label="What should Muse look into?" placeholder="Ask Muse to look into something"></textarea>
-        <button class="btn go" id="askbtn">Ask</button>
-      </form>
-      <p class="note" id="asknote" aria-live="polite"></p>
-    </div>
-  </main>
+<svg hidden>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M20 11.5a7.5 7.5 0 0 1-11 6.6L4.5 19.5l1.4-4.2A7.5 7.5 0 1 1 20 11.5Z"/></symbol>
+  <symbol id="i-idea" viewBox="0 0 24 24"><path d="M9 17.5h6M10 20.5h4M8.2 14.2a6 6 0 1 1 7.6 0c-.6.5-.8 1.1-.8 1.8H9c0-.7-.2-1.3-.8-1.8Z"/></symbol>
+  <symbol id="i-memory" viewBox="0 0 24 24"><path d="M7 4.5h10a1 1 0 0 1 1 1v14l-6-3.6-6 3.6v-14a1 1 0 0 1 1-1Z"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5.5M6 11l6-6 6 6"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5"/></symbol>
+  <symbol id="i-doc" viewBox="0 0 24 24"><path d="M7 3.5h7l4 4v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1ZM14 3.5v4h4M9 12.5h6M9 16h6"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5"/></symbol>
+  <symbol id="i-next" viewBox="0 0 24 24"><path d="m9.5 6 6 6-6 6"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></symbol>
+  <symbol id="i-again" viewBox="0 0 24 24"><path d="M5 12a7 7 0 1 1 2.2 5.1M5 18v-4h4"/></symbol>
+</svg>
+<div class="app">
+  <header class="bar">
+    <div class="face"><b id="mono">m</b><i id="presence"></i></div>
+    <div class="who"><strong>Muse</strong><span id="how" aria-live="polite"></span></div>
+    <nav class="tabs" aria-label="Sections"></nav>
+  </header>
+  <main id="view"></main>
+  <div class="compose" id="compose" hidden>
+    <form class="box" id="askform">
+      <textarea id="task" rows="1" aria-label="Message Muse" placeholder="Ask Muse to look into something"></textarea>
+      <button class="send" id="askbtn" aria-label="Send"><svg><use href="#i-send"/></svg></button>
+    </form>
+    <p class="hint" id="asknote" aria-live="polite"></p>
+  </div>
+  <nav class="dock tabs-dock" aria-label="Sections"></nav>
 </div>
+<div class="shade" id="shade" hidden><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheettitle" id="sheet"></div></div>
 <script>
 "use strict";
 const IDEAS = [
@@ -201,6 +251,8 @@ const SAY = [
   ["What did you find?", "Tells you about its latest research"],
   ["Good night", "Closes its eyes and sleeps"],
 ];
+const TABS = [["activity", "Chat", "i-chat"], ["ideas", "Ideas", "i-idea"], ["memory", "Memory", "i-memory"]];
+const icon = name => `<svg aria-hidden="true"><use href="#${name}"/></svg>`;
 
 let token = "";
 try {
@@ -212,10 +264,20 @@ try {
 } catch (e) {}
 
 const $ = id => document.getElementById(id);
-const view = $("view"), compose = $("compose"), task = $("task");
-let jobs = [], app = null, canRead = true, drawn = "", lastCount = -1, notice = "";
+const view = $("view"), compose = $("compose"), task = $("task"), shade = $("shade"), sheet = $("sheet");
+let jobs = [], app = null, canRead = true, drawn = "", lastCount = -1, notice = "", reading = "";
+
+// Your own picture for Muse, if the server has one (companion/avatar.png).
+const picture = new Image();
+picture.alt = "";
+picture.onload = () => $("mono").replaceWith(picture);
+picture.src = "/avatar.png";
+
+for (const nav of document.querySelectorAll(".tabs, .dock"))
+  nav.innerHTML = TABS.map(([go, name, sym]) => `<button data-go="${go}">${icon(sym)}<span>${name}</span></button>`).join("");
 
 const esc = s => String(s).replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const sentence = s => { s = String(s || "").trim(); return s ? s.charAt(0).toUpperCase() + s.slice(1) + (/[.!?]$/.test(s) ? "" : ".") : ""; };
 
 function inline(s) {
   s = esc(s);
@@ -275,127 +337,132 @@ async function call(path, body) {
 const route = () => (location.hash.startsWith("#/") ? location.hash.slice(2) : "activity").split("/");
 const go = where => { location.hash = "#/" + where; };
 
-function timeOf(seconds) {
-  return new Date(seconds * 1000).toLocaleTimeString(undefined, {hour: "numeric", minute: "2-digit"});
-}
+const timeOf = s => new Date(s * 1000).toLocaleTimeString(undefined, {hour: "numeric", minute: "2-digit"});
 function dayOf(seconds) {
   const d = new Date(seconds * 1000), now = new Date();
   const days = Math.round((new Date(now.getFullYear(), now.getMonth(), now.getDate()) - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 864e5);
   return days === 0 ? "Today" : days === 1 ? "Yesterday" : d.toLocaleDateString(undefined, {weekday: "long", day: "numeric", month: "long"});
 }
-const sentence = s => { s = String(s || "").trim(); return s ? s.charAt(0).toUpperCase() + s.slice(1) + (/[.!?]$/.test(s) ? "" : ".") : ""; };
 const minutes = s => s < 90 ? "about a minute" : Math.round(s / 60) + " minutes";
 
 function signIn(why) {
-  return `<h1>Sign in</h1><p class="lede">${why}</p>
+  return `<div class="signin"><h1>Sign in</h1><p class="lede">${why}</p>
     <p>On your computer, <code>python3 companion/muse_companion.py results</code> opens this page signed in.
     Or paste the token from <code>~/.config/muse/server.json</code>.</p>
-    <form class="sign" id="signform"><input type="password" id="tok" aria-label="Token" autocomplete="off" placeholder="Token">
-    <button class="btn go">Sign in</button></form><p class="note bad" id="signnote" aria-live="polite"></p>`;
+    <form class="addrow" id="signform"><input class="field" type="password" id="tok" aria-label="Token" autocomplete="off" placeholder="Token">
+    <button class="solid">Sign in</button></form><p class="status bad" id="signnote" aria-live="polite"></p></div>`;
 }
 
 function jobHtml(j) {
-  let body;
+  let reply;
   if (j.status === "running") {
-    body = `<p class="busy"><i class="breath"></i>Looking into it. This takes a few minutes.</p>`;
+    reply = `<div class="bubble">On it. I'll say when it's ready.</div>
+      <p class="doing">${icon("i-search")}Searching the web and reading</p>
+      <div class="bubble dots" role="status" aria-label="Muse is working"><i></i><i></i><i></i></div>`;
   } else if (j.status === "done") {
-    body = `<p class="said">${esc(j.summary || "The write-up is ready.")}</p>
-      <div class="row"><button class="btn" data-read="${esc(j.id)}">Read the write-up</button>
-      <span class="note">${j.words ? j.words + " words, " : ""}${j.took_s ? minutes(j.took_s) + " of work" : ""}</span></div>`;
+    reply = `<div class="bubble">${esc(j.summary || "The write-up is ready.")}</div>
+      <div class="card"><div class="head"><div class="tile">${icon("i-doc")}</div>
+        <div><strong>${esc(j.title)}</strong><span>${j.words ? j.words + " words, " : ""}${j.took_s ? minutes(j.took_s) + " of work" : "write-up"}</span></div></div>
+        <button class="wide" data-read="${esc(j.id)}">${icon("i-doc")}Read the write-up</button></div>`;
   } else {
-    body = `<p class="said bad">This did not finish. ${esc(sentence(j.error))}</p>
-      <div class="row"><button class="btn" data-again="${esc(j.id)}">Ask again</button></div>`;
+    reply = `<div class="bubble bad">I couldn't finish this one. ${esc(sentence(j.error))}</div>
+      <button class="chip" data-again="${esc(j.id)}">${icon("i-again")}Ask again</button>`;
   }
-  return `<section class="job"><p class="ask"><span>${esc(j.task || j.title)}</span></p>
-    <p class="when">${timeOf(j.created)}</p>${body}</section>`;
+  return `<div class="msg me"><div class="bubble">${esc(j.task || j.title)}</div><span class="time">${timeOf(j.created)}</span></div>
+    <div class="msg muse">${reply}</div>`;
 }
 
 function drawActivity() {
-  if (!canRead) return signIn("Your requests and Muse's write-ups are private on this server.");
+  if (!canRead) return signIn("Your conversation with Muse is private on this server.");
   if (!jobs.length) {
-    return `<h1>Nothing yet</h1><p class="empty">Hold BOOT and ask Muse to look into something, or type it below.
-      Muse says when it is ready, and the write-up appears here. <button class="link" data-go="ideas">See some ideas</button></p>`;
+    return `<div class="welcome"><div class="tile">${icon("i-search")}</div><h1>Hand Muse something bigger</h1>
+      <p>Ask out loud or type it here. Muse looks into it for a few minutes, tells you when it's ready, and leaves the write-up in this chat.</p>
+      <div class="starters">${IDEAS.slice(0, 3).map(t => `<button data-idea="${esc(t)}">${esc(t)}</button>`).join("")}</div></div>`;
   }
   let html = "", day = "";
   for (const j of jobs.slice().reverse()) {
     const d = dayOf(j.created);
-    if (d !== day) { html += `<p class="day">${d}</p>`; day = d; }
+    if (d !== day) { html += `<p class="day"><span>${d}</span></p>`; day = d; }
     html += jobHtml(j);
   }
   return html;
 }
 
 function drawIdeas() {
-  return `<h1>Ideas</h1><p class="lede">Pick one to start from. You can change the words before you ask.</p>
+  return `<h1>Ideas</h1><p class="lede">Tap one to start from it. You can change the words before you send.</p>
     <h2>Hand it to Muse</h2>
-    <ul class="list">${IDEAS.map(t => `<li><button class="idea" data-idea="${esc(t)}">${esc(t)}</button></li>`).join("")}</ul>
-    <h2>Say it out loud</h2>
-    <p class="note" style="margin:-4px 0 10px">Hold the BOOT button on Muse, speak, then let go.</p>
-    <ul class="list">${SAY.map(([q, what]) => `<li class="say"><q>${esc(q)}</q><span>${esc(what)}</span></li>`).join("")}</ul>`;
+    <div class="group">${IDEAS.map(t => `<button class="item" data-idea="${esc(t)}"><span class="tile">${icon("i-search")}</span>
+      <span class="words"><b>${esc(t)}</b></span>${icon("i-next")}</button>`).join("")}</div>
+    <h2>Say it out loud: hold BOOT on Muse, speak, let go</h2>
+    <div class="group">${SAY.map(([q, what]) => `<div class="item"><span class="tile">${icon("i-mic")}</span>
+      <span class="words"><b>${esc(q)}</b><span>${esc(what)}</span></span></div>`).join("")}</div>`;
 }
 
 function drawMemory() {
   if (!app) return signIn("What Muse remembers about you is private.");
   const notes = app.memory || [];
   return `<h1>Memory</h1><p class="lede">What Muse remembers about you. It uses these when you talk, and hands them to its research.</p>
-    <form class="add" id="addform"><input id="note" aria-label="Something for Muse to remember" maxlength="160"
-      placeholder="Something for Muse to remember"><button class="btn go">Remember</button></form>
-    <p class="note" id="memnote" aria-live="polite">${notice}</p>
-    ${notes.length ? `<ul class="list">${notes.map(n => `<li class="mem"><span>${esc(n)}</span>
-      <button class="link" data-forget="${esc(n)}">Forget</button></li>`).join("")}</ul>`
-      : `<p class="empty">Nothing yet. Tell Muse out loud ("remember that I like green tea") or add a note here.</p>`}`;
+    <form class="addrow" id="addform"><input class="field" id="note" aria-label="Something for Muse to remember" maxlength="160"
+      placeholder="Something for Muse to remember"><button class="solid">Remember</button></form>
+    <p class="status" id="memnote" aria-live="polite">${notice}</p>
+    <div class="group">${notes.length ? notes.map(n => `<div class="item"><span class="tile">${icon("i-memory")}</span>
+      <span class="words">${esc(n)}</span><button class="round" data-forget="${esc(n)}" aria-label="Forget: ${esc(n)}">${icon("i-x")}</button></div>`).join("")
+      : `<p class="empty">Nothing yet. Tell Muse out loud ("remember that I like green tea") or add a note above.</p>`}</div>`;
 }
 
-async function drawReader(id) {
+async function openSheet(id) {
+  if (reading === id) return;
+  reading = id;
   let j;
   try { j = await call("/results/" + encodeURIComponent(id) + ".json"); }
-  catch (e) { return e.message === "signin" ? signIn("This write-up is private on this server.") : `<p class="empty">Could not open that one. ${esc(e.message)}</p>`; }
-  const top = `<p class="back"><button class="link" data-go="activity">Back to activity</button></p>
-    <p class="ask"><span>${esc(j.task || j.title)}</span></p><p class="when">${dayOf(j.created)}, ${timeOf(j.created)}</p>`;
-  if (j.status === "running") return top + `<p class="busy"><i class="breath"></i>Muse is still working on this.</p>`;
-  if (j.status !== "done") return top + `<p class="said bad">This did not finish. ${esc(sentence(j.error))}</p>`;
-  return top + `<div class="reading">${markdown(j.report || "")}</div>`;
+  catch (e) { j = {title: "Could not open that one", status: "failed", error: e.message === "signin" ? "sign in first" : e.message, created: Date.now() / 1000}; }
+  const body = j.status === "done" ? markdown(j.report || "")
+    : j.status === "running" ? `<p>Muse is still working on this.</p>` : `<p>${esc(sentence(j.error))}</p>`;
+  sheet.innerHTML = `<header><div><strong id="sheettitle">${esc(j.task || j.title)}</strong>
+    <span>${dayOf(j.created)}, ${timeOf(j.created)}</span></div>
+    <button class="close" data-go="activity" aria-label="Close">${icon("i-x")}</button></header><div class="reading" tabindex="0">${body}</div>`;
+  shade.hidden = false;
+  document.body.style.overflow = "hidden";
+  sheet.querySelector(".close").focus();
 }
+function closeSheet() { reading = ""; shade.hidden = true; document.body.style.overflow = ""; }
 
-function drawRail() {
+function drawBar() {
   const tab = route()[0] === "read" ? "activity" : route()[0];
-  for (const b of document.querySelectorAll(".tabs button")) b.setAttribute("aria-current", b.dataset.go === tab ? "page" : "false");
-  let how = "", foot = "";
+  for (const b of document.querySelectorAll("[data-go]")) if (b.closest(".tabs, .dock")) b.setAttribute("aria-current", b.dataset.go === tab ? "page" : "false");
+  let how = canRead ? "Sign in to ask and see how Muse is" : "";
   if (app) {
-    const m = app.muse;
-    how = `<span><i class="dot ${app.connected ? "on" : ""}"></i><b>${app.connected ? "Muse is connected" : "Muse is not connected"}</b></span>`;
-    if (m && m.battery_percent != null) how += `<span class="extra">Battery ${m.battery_percent}%${m.power === "running on battery" ? "" : ", " + esc(m.power)}</span>`;
-    for (const t of app.timers || []) how += `<span class="extra">${esc(t.label)} in ${t.minutes_left < 1 ? "under a minute" : Math.round(t.minutes_left) + " min"}</span>`;
-    if (token) foot = `<button class="link" id="signout">Sign out</button>`;
-  } else if (canRead) {
-    foot = `<button class="link" data-go="memory">Sign in</button>`;
+    const bits = [app.connected ? "Connected" : "Not connected"];
+    if (app.muse && app.muse.battery_percent != null) bits.push("battery " + app.muse.battery_percent + "%" + (app.muse.power === "charging" ? ", charging" : ""));
+    for (const t of app.timers || []) bits.push(t.label + " in " + (t.minutes_left < 1 ? "under a minute" : Math.round(t.minutes_left) + " min"));
+    how = bits.join(", ");
   }
-  $("how").innerHTML = how;
-  $("foot").innerHTML = foot;
+  $("how").textContent = how;
+  $("presence").className = app && app.connected ? "on" : "";
 }
 
-async function draw(force) {
+async function draw() {
   const [where, id] = route();
-  drawRail();
+  drawBar();
+  if (where === "read" && id) await openSheet(id); else closeSheet();
+  const tab = where === "ideas" || where === "memory" ? where : "activity";
   let html, key;
-  if (where === "read" && id) { key = "read" + id + (jobs.find(j => j.id === id) || {}).status; if (key === drawn && !force) return; html = await drawReader(id); }
-  else if (where === "ideas") { key = "ideas"; html = drawIdeas(); }
-  else if (where === "memory") { key = "memory" + JSON.stringify(app && app.memory) + notice; html = drawMemory(); }
+  if (tab === "ideas") { key = "ideas"; html = drawIdeas(); }
+  else if (tab === "memory") { key = "memory" + JSON.stringify(app && app.memory) + notice; html = drawMemory(); }
   else { key = "activity" + canRead + JSON.stringify(jobs.map(j => [j.id, j.status])); html = drawActivity(); }
-  const asking = where === "activity" && canRead;
+  const asking = tab === "activity" && canRead;
   compose.hidden = !asking;
   if (asking) {
-    const why = !app ? "" : app.cannot_work;
+    const why = app ? app.cannot_work : "";
     $("askbtn").disabled = !app || Boolean(why);
     task.disabled = !app;
-    $("asknote").innerHTML = !app ? `<button class="link" data-go="memory">Sign in</button> to ask from here. You can always ask Muse out loud.`
-      : esc(sentence(why));
+    $("asknote").innerHTML = !app ? `<button class="link" data-go="memory">Sign in</button> to ask from here. You can always ask Muse out loud.` : esc(sentence(why));
   }
-  if (key === drawn && !force) return;
-  const fresh = !drawn.startsWith(where === "read" ? "read" + id : where);
+  if (key === drawn) return;
+  const fresh = !drawn.startsWith(tab);
   drawn = key;
   view.innerHTML = html;
-  if (where === "activity" && (fresh || jobs.length !== lastCount)) window.scrollTo(0, document.documentElement.scrollHeight);
+  if (tab === "activity" && (fresh || jobs.length !== lastCount)) window.scrollTo(0, document.documentElement.scrollHeight);
   else if (fresh) window.scrollTo(0, 0);
   lastCount = jobs.length;
 }
@@ -410,19 +477,20 @@ async function refresh() {
 
 async function ask(text) {
   text = text.trim();
-  if (!text) return;
+  if (!text || !app) return;
   $("askbtn").disabled = true;
   try {
     const r = await call("/ask", {task: text});
-    if (r.ok) { task.value = ""; grow(); $("asknote").textContent = ""; go("activity"); }
-    else $("asknote").textContent = r.error || "Muse could not start that.";
+    if (r.ok) { task.value = ""; grow(); go("activity"); }
+    else $("asknote").textContent = sentence(r.error || "Muse could not start that");
   } catch (e) { $("asknote").textContent = e.message === "signin" ? "Sign in to ask from here." : e.message; }
   await refresh();
 }
 
-function grow() { task.style.height = "auto"; task.style.height = Math.min(task.scrollHeight + 3, 150) + "px"; }
+function grow() { task.style.height = "auto"; task.style.height = Math.min(task.scrollHeight, 140) + "px"; }
 
 document.addEventListener("click", async e => {
+  if (e.target === shade) return go("activity");
   const b = e.target.closest("button");
   if (!b) return;
   if (b.dataset.go) go(b.dataset.go);
@@ -435,7 +503,6 @@ document.addEventListener("click", async e => {
     notice = `Forgotten. <button class="link" data-undo="${esc(text)}">Undo</button>`;
     await refresh();
   } else if (b.dataset.undo) { await call("/memory", {add: b.dataset.undo}).catch(() => {}); notice = ""; await refresh(); }
-  else if (b.id === "signout") { token = ""; try { localStorage.removeItem("muse_token"); } catch (err) {} drawn = ""; await refresh(); }
 });
 
 document.addEventListener("submit", async e => {
@@ -445,7 +512,7 @@ document.addEventListener("submit", async e => {
     const text = $("note").value.trim();
     if (!text) return;
     const r = await call("/memory", {add: text}).catch(err => ({error: err.message}));
-    notice = r.ok ? "" : esc(r.error || "Could not save that.");
+    notice = r.ok ? "" : esc(sentence(r.error || "Could not save that"));
     await refresh();
   } else if (e.target.id === "signform") {
     token = $("tok").value.trim();
@@ -454,6 +521,7 @@ document.addEventListener("submit", async e => {
   }
 });
 
+document.addEventListener("keydown", e => { if (e.key === "Escape" && !shade.hidden) go("activity"); });
 task.addEventListener("input", grow);
 task.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); ask(task.value); } });
 window.addEventListener("hashchange", () => { notice = ""; draw(); });

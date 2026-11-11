@@ -155,7 +155,8 @@ has Muse announce the summary (see [Speaking first](#speaking-first)).
 | Testing | `MUSE_WORKER_FAKE=1` makes the worker return a canned result without a model |
 
 The write-ups are read in the web app at `/results` on the server (`muse_companion.py results`
-opens it). The page itself holds no data. It fetches `/results.json` and `/results/<id>.json`
+opens it), laid out as a chat. `GET /avatar.png` serves `companion/avatar.png`, if you have put
+a picture there, as Muse's picture in it. The page itself holds no data. It fetches `/results.json` and `/results/<id>.json`
 for the jobs and `/app.json` for Muse's state, timers and memory, and posts `{"task": ...}` to
 `/ask` (which calls `Hub.start_job()`, the same as the `work_on` tool) and `{"add": ...}` or
 `{"forget": ...}` to `/memory`. All of these need the token online; on your own computer the

@@ -266,14 +266,18 @@ that is.
 
 ### The web app
 
-The server has a small web app at `/results`, for the things a tiny screen is bad at:
+The server has a small web app at `/results`, for the things a tiny screen is bad at. It is
+laid out as a chat with Muse:
 
 | | |
 | --- | --- |
-| Activity | Each request, what Muse said about it, and the write-up to read. Type a new request at the bottom; it starts the same background job as asking out loud, and Muse announces the result |
-| Ideas | Things to hand over (a tap puts one in the box) and things to say out loud |
+| Chat | Your requests on the right, Muse's answers on the left, and a card for each write-up that opens it to read. Type a new request at the bottom; it starts the same background job as asking out loud, and Muse announces the result |
+| Ideas | Things to hand over (a tap puts one in the message box) and things to say out loud |
 | Memory | What Muse remembers about you: add a note, or forget one |
-| On the side | Whether Muse is connected, its battery, and running timers |
+| At the top | Whether Muse is connected, its battery, and running timers |
+
+For your own picture of Muse at the top, save it as `companion/avatar.png` (and deploy again
+if the server is online).
 
 `python3 companion/muse_companion.py results` opens it signed in, and the browser stays signed
 in; on a phone, paste the token from `~/.config/muse/server.json` once. Online, everything needs

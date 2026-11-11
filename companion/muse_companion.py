@@ -594,6 +594,16 @@ async def handle(hub, reader, writer):
             respond(writer, "200 OK", json.dumps(result).encode())
             return
 
+        if method == "GET" and path == "/avatar.png":
+            # Your own picture for Muse in the web app, if you have put one next to this file.
+            try:
+                with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "avatar.png"), "rb") as f:
+                    picture = f.read(2 * 1024 * 1024)
+                respond(writer, "200 OK", picture, "image/png")
+            except OSError:
+                respond(writer, "404 Not Found")
+            return
+
         if method == "GET" and path == "/results":
             respond(writer, "200 OK", muse_results.PAGE.encode(), "text/html; charset=utf-8")
             return
