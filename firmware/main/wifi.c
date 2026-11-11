@@ -43,6 +43,7 @@ static EventGroupHandle_t s_events;
 static esp_timer_handle_t s_reconnect_timer;
 static volatile bool s_connecting, s_auto_reconnect, s_online, s_setup_active, s_hold;
 static uint32_t s_backoff_ms = BACKOFF_MIN_MS;
+static volatile int s_last_reason;
 
 // ---------------------------------------------------------------- saved networks
 static int creds_load(network_t *out, int max)
@@ -130,7 +131,8 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
     s_online = false;
     const wifi_event_sta_disconnected_t *d = data;
     if (s_connecting) {
-        ESP_LOGW(TAG, "connect failed (reason %d)", d ? d->reason : -1);
+        s_last_reason = d ? d->reason : -1;
+        ESP_LOGW(TAG, "connect failed (reason %d)", s_last_reason);
         xEventGroupSetBits(s_events, BIT_FAILED);
     } else if (s_auto_reconnect) {
         ESP_LOGW(TAG, "link dropped (reason %d), retrying in %u ms", d ? d->reason : -1, (unsigned)s_backoff_ms);
@@ -170,26 +172,37 @@ static void station_config(wifi_config_t *wc, const char *ssid, const char *pass
     wc->sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
 }
 
-// Try each saved network in turn, giving up early on a failure.
-static bool connect_saved(void)
+// Try each saved network in turn, giving up early on a failure. A network that
+// is in range but fails (a weak signal can time out the handshake) gets a
+// second try. *in_range tells whether any saved network was there at all.
+static bool connect_saved(bool *in_range)
 {
     network_t nets[MAX_NETWORKS];
     const int n = creds_load(nets, MAX_NETWORKS);
+    *in_range = false;
     for (int i = 0; i < n; i++) {
-        wifi_config_t wc;
-        station_config(&wc, nets[i].ssid, nets[i].pass);
-        esp_wifi_set_config(WIFI_IF_STA, &wc);
-        ESP_LOGI(TAG, "trying %s", nets[i].ssid);
-        xEventGroupClearBits(s_events, BIT_CONNECTED | BIT_FAILED);
-        s_connecting = true;
-        esp_wifi_connect();
-        const EventBits_t bits = xEventGroupWaitBits(s_events, BIT_CONNECTED | BIT_FAILED, pdTRUE, pdFALSE,
-                                                     pdMS_TO_TICKS(CONNECT_TIMEOUT_MS));
-        s_connecting = false;
-        if (bits & BIT_CONNECTED) {
-            return true;
+        for (int attempt = 0; attempt < 2; attempt++) {
+            wifi_config_t wc;
+            station_config(&wc, nets[i].ssid, nets[i].pass);
+            esp_wifi_set_config(WIFI_IF_STA, &wc);
+            ESP_LOGI(TAG, "trying %s", nets[i].ssid);
+            xEventGroupClearBits(s_events, BIT_CONNECTED | BIT_FAILED);
+            s_last_reason = 0;
+            s_connecting = true;
+            esp_wifi_connect();
+            const EventBits_t bits = xEventGroupWaitBits(s_events, BIT_CONNECTED | BIT_FAILED, pdTRUE, pdFALSE,
+                                                         pdMS_TO_TICKS(CONNECT_TIMEOUT_MS));
+            s_connecting = false;
+            if (bits & BIT_CONNECTED) {
+                *in_range = true;
+                return true;
+            }
+            esp_wifi_disconnect();
+            if (s_last_reason == WIFI_REASON_NO_AP_FOUND) {
+                break;  // not here
+            }
+            *in_range = true;
         }
-        esp_wifi_disconnect();
     }
     return false;
 }
@@ -224,9 +237,10 @@ static void wifi_task(void *arg)
     for (;;) {
         if (!s_online && !s_hold && wifi_has_credentials()) {
             s_auto_reconnect = false;
-            const bool connected = connect_saved();
+            bool in_range;
+            const bool connected = connect_saved(&in_range);
             s_auto_reconnect = !s_hold;
-            if (!connected && !offered_setup) {
+            if (!connected && !in_range && !offered_setup) {
                 // New place: offer setup once per start-up.
                 ESP_LOGI(TAG, "no saved network in range: opening setup on the screen");
                 offered_setup = true;

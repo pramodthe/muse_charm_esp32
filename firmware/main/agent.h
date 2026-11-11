@@ -3,7 +3,7 @@
 // holds the Deepgram key and talks to the Deepgram Voice Agent API; Muse only
 // streams audio over its companion connection.
 //
-//   hold the screen  agent_begin_turn()  microphone streams to the server
+//   hold BOOT        agent_begin_turn()  microphone streams to the server
 //   let go           agent_end_turn()    Muse thinks, then the reply plays
 //
 // Progress is published in g_muse.agent_state, and actions the AI asks for
@@ -11,6 +11,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 // Allocate buffers and start the agent task. Call once at start-up.
@@ -34,8 +35,13 @@ bool agent_listening(void);
 void agent_push_mic(const int16_t *pcm, int samples);
 int agent_pull_speech(int16_t *pcm, int samples);
 
+// For the behaviour task: the caption to show under Muse during a
+// conversation ("Listening...", what it heard, then the reply as subtitles).
+void agent_caption(char *buf, size_t len);
+
 // For companion.c: the link and what the server says.
 void agent_on_link_lost(void);
 void agent_on_voice_ready(bool on);
-void agent_on_voice(const char *state, const char *action, const char *error);
+void agent_on_voice(const char *state, const char *action, const char *error, const char *heard, const char *say,
+                    int cps);
 void agent_on_audio(const void *data, int len);

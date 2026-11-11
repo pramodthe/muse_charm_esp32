@@ -52,6 +52,16 @@ static const muse_note_t MMHM[] = {
     END,
 };
 
+static const muse_note_t LISTEN[] = {
+    {560, 820, 140, 65, 0, 0},
+    END,
+};
+
+static const muse_note_t THINK[] = {
+    {470, 430, 280, 50, 5, 18},
+    END,
+};
+
 const muse_note_t *const muse_sounds[MUSE_SOUND_COUNT] = {
     [MUSE_SOUND_HELLO] = HELLO,
     [MUSE_SOUND_GIGGLE] = GIGGLE,
@@ -60,4 +70,6 @@ const muse_note_t *const muse_sounds[MUSE_SOUND_COUNT] = {
     [MUSE_SOUND_DIZZY] = DIZZY,
     [MUSE_SOUND_WHOOSH] = WHOOSH,
     [MUSE_SOUND_MMHM] = MMHM,
+    [MUSE_SOUND_LISTEN] = LISTEN,
+    [MUSE_SOUND_THINK] = THINK,
 };

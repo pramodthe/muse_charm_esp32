@@ -227,8 +227,8 @@ void face_apply(void)
         int w = 7, h = 7;
         if (expr == MUSE_EXPR_TALK) {
             const float level = g_muse.mouth_level;
-            w = 9 + (int)(5.0f * level);
-            h = 3 + (int)(11.0f * level);
+            w = 9 + (int)(8.0f * level);
+            h = 3 + (int)(15.0f * level);
         } else if (expr == MUSE_EXPR_DIZZY) {
             w = 8 + (s_spin / 90) % 2 * 2;
             h = 6;

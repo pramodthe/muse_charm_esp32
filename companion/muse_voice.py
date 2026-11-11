@@ -10,17 +10,25 @@ key stays on this computer.
              {"type":"talk_stop"}                      stop the reply that is playing
     Muse <-  {"type":"voice","state":"thinking|speaking|done|error"}
              {"type":"voice","action":"wave|giggle|cheer|dizzy"}
+             {"type":"voice","heard":"..."}           what you said (for the caption)
+             {"type":"voice","say":"...","cps":17}    a sentence of the reply, sent
+                                                       just before its audio (subtitles)
              reply audio (binary, 16 kHz 16-bit mono)
+
+Muse's voice is the Deepgram voice raised in pitch (and a little faster), so
+it sounds like the same small creature that chirps.
 
 Key:      ~/.config/muse/deepgram_key, or the DEEPGRAM_API_KEY environment variable
 Options:  ~/.config/muse/voice.json, for example
-          {"voice": "aura-2-luna-en", "think_provider": "open_ai", "think_model": "gpt-4o-mini",
-           "prompt": "You are Muse, ..."}
+          {"voice": "aura-2-luna-en", "pitch": 1.25, "think_provider": "open_ai",
+           "think_model": "gpt-4o-mini", "prompt": "You are Muse, ..."}
 """
 
+import array
 import asyncio
 import json
 import os
+import sys
 import time
 
 import muse_ws as ws
@@ -38,20 +46,23 @@ IDLE_CLOSE_S = 120       # close the Deepgram connection after this much quiet
 LEAD_S = 2.5             # how far ahead of playback reply audio is sent to Muse
 CHUNK = 1600             # 50 ms of reply audio per message to Muse
 HISTORY = 8              # recent messages carried over when reconnecting
+SPEAKING_CPS = 14.5      # characters per second at normal pitch (for subtitles)
 
 DEFAULTS = {
     "voice": "aura-2-thalia-en",
+    "pitch": 1.18,            # 1 = Deepgram's voice unchanged
     "listen_model": "nova-3",
     "think_provider": "anthropic",
     "think_model": "claude-haiku-4-5",
     "prompt": (
-        "You are Muse, a tiny cheerful companion who lives on a little screen next to the user's "
-        "computer. You are warm, playful and curious, and you talk like a kind friend. Everything you "
-        "say is spoken aloud, so keep each reply to one or two short sentences and never use lists, "
-        "markdown, emojis or stage directions. When it fits, call muse_action to wave, giggle, cheer "
-        "or act dizzy. Claude Code, an AI coding assistant, often works on the same computer; if the "
-        "user asks what Claude is doing or how their work is going, call claude_status and answer in "
-        "a sentence."
+        "You are Muse, a tiny, round, cheerful creature who lives on a little screen next to the "
+        "user's computer. You are warm, playful and curious, a little bit silly, and you talk like a "
+        "kind friend, in short, bright sentences. Everything you say is spoken aloud by you, so "
+        "usually answer in one short sentence, two at most, and never use lists, markdown, emojis or "
+        "stage directions. Show feelings with your body: when it fits, call muse_action to wave "
+        "(hello, goodbye), giggle (something funny), cheer (good news) or act dizzy (confused). "
+        "Claude Code, an AI coding assistant, often works on the same computer; if the user asks what "
+        "Claude is doing or how their work is going, call claude_status and answer in a sentence."
     ),
 }
 
@@ -60,6 +71,50 @@ ACTIONS = ["wave", "giggle", "cheer", "dizzy"]
 
 def log(*args):
     print(time.strftime("%H:%M:%S"), *args, flush=True)
+
+
+def ascii_text(text, limit):
+    """Muse's font has ASCII only."""
+    for a, b in (("\u2014", " - "), ("\u2013", "-"), ("\u2019", "'"), ("\u2018", "'"), ("\u201c", '"'),
+                 ("\u201d", '"'), ("\u2026", "...")):
+        text = text.replace(a, b)
+    text = " ".join("".join(c for c in text if 32 <= ord(c) < 127).split())
+    return text if len(text) <= limit else text[: limit - 3].rstrip() + "..."
+
+
+class Pitch:
+    """Raises the pitch of 16-bit mono audio by reading it faster (linear
+    interpolation): factor 1.18 is about three semitones higher and 18% quicker."""
+
+    def __init__(self, factor):
+        self.factor = max(0.5, min(2.0, float(factor)))
+        self.reset()
+
+    def reset(self):
+        self.pos = 0.0
+        self.buf = array.array("h")
+
+    def feed(self, data):
+        if self.factor == 1.0:
+            return data
+        src = array.array("h")
+        src.frombytes(data)
+        if sys.byteorder != "little":
+            src.byteswap()
+        self.buf.extend(src)
+        buf, out, p, f = self.buf, array.array("h"), self.pos, self.factor
+        n = len(buf) - 1
+        while p < n:
+            i = int(p)
+            a = buf[i]
+            out.append(int(a + (buf[i + 1] - a) * (p - i)))
+            p += f
+        keep = int(p)
+        self.buf = buf[keep:]
+        self.pos = p - keep
+        if sys.byteorder != "little":
+            out.byteswap()
+        return out.tobytes()
 
 
 def key_status():
@@ -148,6 +203,7 @@ class Voice:
         self.heard = 0                      # bytes of microphone audio this turn
         self.discard = False                # drop reply audio (you interrupted it)
         self.replying = False               # reply audio is flowing to Muse
+        self.pitch = Pitch(DEFAULTS["pitch"])
         self.history = []
         self.last_sent = self.last_activity = time.monotonic()
         self.tasks = []
@@ -228,7 +284,9 @@ class Voice:
             self.connecting = None
             self._fail("could not connect to Deepgram: %s" % (e or type(e).__name__))
             return
-        log("voice: connected to Deepgram (%s, %s/%s)" % (opts["voice"], opts["think_provider"], opts["think_model"]))
+        self.pitch = Pitch(opts["pitch"])
+        log("voice: connected to Deepgram (%s at pitch %.2f, %s/%s)" % (
+            opts["voice"], self.pitch.factor, opts["think_provider"], opts["think_model"]))
         self._send_json(settings_message(opts, self.history))
         self.tasks.append(asyncio.ensure_future(self._read_loop()))
         self.tasks.append(asyncio.ensure_future(self._housekeeping()))
@@ -292,6 +350,7 @@ class Voice:
     def _start_reply(self):
         if not self.replying:
             self.replying = True
+            self.pitch.reset()
             self.link.queue_voice("start", None)
 
     def _reply_audio(self, data):
@@ -299,6 +358,7 @@ class Voice:
             return
         self._start_reply()               # Deepgram no longer always sends AgentStartedSpeaking
         self.last_activity = time.monotonic()
+        data = self.pitch.feed(data)
         for i in range(0, len(data), CHUNK):
             self.link.queue_voice("audio", data[i:i + CHUNK])
 
@@ -320,6 +380,12 @@ class Voice:
             role, content = msg.get("role"), msg.get("content") or ""
             log("voice: %s: %s" % ("you" if role == "user" else "muse", content))
             self.history = (self.history + [(role, content[:400])])[-HISTORY:]
+            if role == "user":
+                self.link.send_json({"type": "voice", "heard": ascii_text(content, 110)})
+            elif not self.talking and not self.discard:
+                # In order with the audio, so Muse can time the subtitle.
+                self.link.queue_voice("json", {"type": "voice", "say": ascii_text(content, 190),
+                                               "cps": round(SPEAKING_CPS * self.pitch.factor)})
             self.last_activity = time.monotonic()
         elif t == "AgentThinking":
             self.link.send_json({"type": "voice", "state": "thinking"})

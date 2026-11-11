@@ -96,9 +96,13 @@ static void handle_message(const char *text, int len)
     } else if (type && strcmp(type, "voice_ready") == 0) {
         agent_on_voice_ready(cJSON_IsTrue(cJSON_GetObjectItem(root, "on")));
     } else if (type && strcmp(type, "voice") == 0) {
+        const cJSON *cps = cJSON_GetObjectItem(root, "cps");
         agent_on_voice(cJSON_GetStringValue(cJSON_GetObjectItem(root, "state")),
                        cJSON_GetStringValue(cJSON_GetObjectItem(root, "action")),
-                       cJSON_GetStringValue(cJSON_GetObjectItem(root, "error")));
+                       cJSON_GetStringValue(cJSON_GetObjectItem(root, "error")),
+                       cJSON_GetStringValue(cJSON_GetObjectItem(root, "heard")),
+                       cJSON_GetStringValue(cJSON_GetObjectItem(root, "say")),
+                       cJSON_IsNumber(cps) ? cps->valueint : 0);
     } else if (type && strcmp(type, "claude") == 0) {
         const char *mood = cJSON_GetStringValue(cJSON_GetObjectItem(root, "mood"));
         const char *caption = cJSON_GetStringValue(cJSON_GetObjectItem(root, "caption"));

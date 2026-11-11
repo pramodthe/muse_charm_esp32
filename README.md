@@ -1,8 +1,8 @@
 # Muse charm for the ESP32-S3-Touch-AMOLED-1.8
 
 An interactive 3D mascot for the [Waveshare ESP32-S3-Touch-AMOLED-1.8](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.8).
-Hold the screen and talk to it: Muse listens, thinks and answers out loud, with its mouth moving in
-time with its voice (through a small server on your computer and the
+Hold its side button and talk to it: Muse listens, thinks and answers out loud in its own little
+voice, swaying as it speaks with the words running underneath (through a small server on your computer and the
 [Deepgram Voice Agent API](https://developers.deepgram.com/docs/voice-agent)). It also waves when you tap it, giggles when you tap its belly, follows your
 finger with its eyes, leans against the tilt of the board and gets dizzy when shaken. As a
 [Claude Code companion](companion/README.md) it sits by your keyboard and shows what Claude Code
@@ -26,20 +26,20 @@ is doing: thinking, editing a file, waiting for your OK, or done.
 
 | Input | Muse |
 | --- | --- |
-| Hold the screen and talk | Tilts its head and listens, thinks, then answers out loud. Hold again to interrupt |
+| Hold the BOOT button and talk | Chirps "mm?", tilts its head and listens, hums while it thinks, then answers out loud with subtitles underneath. Press BOOT again to interrupt |
 | Drag a finger | Eyes follow your finger |
 | Tap | Waves and chirps "hi!" |
 | Tap the belly | Giggles |
-| Press the BOOT button | Squeezes up with `> <` eyes, cheers when you let go |
-| Hold BOOT for 3 s | Opens setup |
+| Hold the screen | Squeezes up with `> <` eyes, cheers when you let go |
+| Hold the screen for 5 s | Opens setup |
 | Swipe left or right | Gets brushed aside and glances that way |
 | Tilt the board | Stays upright by leaning against the tilt, eyes look downhill |
 | Shake | Gets dizzy |
 | Nothing | Breathes, blinks and glances around |
 
 While it answers, the AI can make Muse wave, giggle, cheer or go dizzy. Without voice chat (no
-companion server, or no Deepgram key on it), holding the screen squeezes Muse instead, and Muse
-just looks up and moves its mouth when it hears a voice. The chirps are synthesized on the board.
+companion server, or no Deepgram key on it), pressing BOOT squeezes Muse instead (holding it 3 s
+opens setup), and Muse just looks up and moves its mouth when it hears a voice. The chirps are synthesized on the board.
 
 ## Voice chat
 
@@ -62,17 +62,21 @@ small screen except your WiFi password.
 
    Or set `DEEPGRAM_API_KEY` in the server's environment.
 3. Start the companion server (next section). Setup opens on Muse's screen on first start, when
-   none of the saved WiFi networks is in range, or after holding **BOOT** for 3 seconds: pick your
+   none of the saved WiFi networks is in range, or after holding the screen for 5 seconds: pick your
    WiFi and type its password on the watch-style keyboard.
-4. Hold the screen, talk, and let go. Hold again while Muse talks to interrupt.
+4. Hold the **BOOT** button on the side, talk, and let go. Press it again while Muse talks to
+   interrupt. The screen stays free for touching Muse.
 
 Ask "what is Claude doing?" and Muse checks on Claude Code for you.
 
 To change the voice, the model or Muse's personality, create `~/.config/muse/voice.json`, for
 example `{"voice": "aura-2-luna-en", "think_provider": "open_ai", "think_model": "gpt-4o-mini"}`.
-The keys are `voice`, `listen_model`, `think_provider`, `think_model` and `prompt`.
+The keys are `voice`, `pitch`, `listen_model`, `think_provider`, `think_model` and `prompt`.
 
-The microphone streams only while you hold the screen. The Deepgram connection opens on the first
+Muse speaks with the Deepgram voice raised a little in pitch, so it sounds like the same small
+creature that chirps; set `"pitch": 1` in `voice.json` for the voice unchanged.
+
+The microphone streams only while you hold BOOT. The Deepgram connection opens on the first
 hold, stays open between turns and closes after two quiet minutes.
 
 ## Claude Code companion
@@ -227,7 +231,7 @@ the scene, because the anchors are taken from them.
 
 ## Troubleshooting
 
-- **Muse shakes its head when you hold the screen:** voice chat couldn't start. The server's
+- **Muse shakes its head when you hold BOOT:** voice chat couldn't start. The server's
   output says why: no key or an unusable key file, or an error from Deepgram (for example an
   invalid key or voice name).
 - **Muse answers before you finish:** Deepgram ends the turn at a long pause. Keep talking, or

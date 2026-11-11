@@ -4,9 +4,10 @@
 //   idle            breathing loop, blinks and glances
 //   tap             wave + "hi!"
 //   tap the belly   giggle
-//   hold            voice chat: listens while held, thinks, then answers
-//                   (squeeze instead when voice chat is not available)
-//   BOOT button     squeeze while held, then cheer; hold 3 s for the setup page
+//   hold the screen squeeze while held, then cheer; 5 s opens setup
+//   hold BOOT       voice chat: listens while held, thinks, then answers with
+//                   the body swaying and subtitles underneath (a squeeze
+//                   instead when voice chat is not available; 3 s opens setup)
 //   swipe           brushed aside, glances that way
 //   tilt            leans against the tilt to stay upright
 //   shake           dizzy (interrupts anything)
@@ -121,7 +122,7 @@ static bool finger_or_button_down(void)
 
 static bool talking_to_muse(void)
 {
-    return g_muse.touch_down && !g_muse.agent_error;
+    return g_muse.button_down && !g_muse.agent_error;
 }
 
 static bool voice_active(void)
@@ -223,63 +224,112 @@ static void play_action(int action, TickType_t *wake)
     }
 }
 
-// Voice chat: listen while the screen is held, think, then answer with the
-// mouth following the reply. Holding again while Muse talks interrupts it.
+// Show the conversation's caption under Muse (agent.c decides what it says).
+static void talk_caption(void)
+{
+    char caption[48];
+    agent_caption(caption, sizeof(caption));
+    face_set_caption(caption);
+}
+
+// Step the lean pose one frame toward target and show it.
+static void lean_toward(int *lean, int target)
+{
+    *lean += (target > *lean) - (target < *lean);
+    clips_show(s_lean->first + *lean);
+}
+
+// Voice chat: listen while BOOT is held, think, then answer. While Muse talks
+// the whole body talks: the mouth follows the reply, the body sways a little
+// on each syllable, gestures land a moment into the reply, and the words run
+// underneath as subtitles. Holding BOOT again interrupts.
 static void react_talk(TickType_t *wake)
 {
+    const int mid = s_lean->count / 2;
     for (;;) {
         g_muse.agent_action = MUSE_ACTION_NONE;
         if (!agent_begin_turn()) {
             react_error(wake);
             return;
         }
+        audio_play(MUSE_SOUND_LISTEN);
+        talk_caption();
         g_muse.expr_override = MUSE_EXPR_NORMAL;
         look(MUSE_GAZE_TARGET, 0.0f, -0.6f);
         play_all(s_listen, wake);  // tilt the head to listen
         hold_while(talking_to_muse, TALK_HOLD_MAX_MS, wake);
         agent_end_turn();
+        audio_play(MUSE_SOUND_THINK);
 
         bool tilted = true, interrupted = false;
-        int idle = 0;
+        int lean = mid, sway = 1;
+        float last_level = 0;
+        int64_t speaking_since = 0, quiet_since = 0;
         const int64_t give_up = muse_now_ms() + CHAT_MAX_MS;
         while (muse_now_ms() < give_up && !g_muse.shake) {
             if (g_muse.agent_error) {
+                face_set_caption("");
                 react_error(wake);
                 return;
             }
             muse_event_t ev;
             if (xQueueReceive(s_events, &ev, 0) == pdTRUE && ev == MUSE_EV_TALK) {
-                agent_stop_speaking();  // held again: interrupt and listen
+                agent_stop_speaking();  // BOOT held again: interrupt and listen
                 interrupted = true;
                 break;
             }
+            talk_caption();
+            const int64_t now = muse_now_ms();
             const int state = g_muse.agent_state;
             if (state == MUSE_AGENT_SPEAKING) {
                 if (tilted) {
                     play(s_listen, s_listen->count - 1, 0, 0, wake);
                     tilted = false;
+                    speaking_since = now;
                 }
                 g_muse.expr_override = MUSE_EXPR_TALK;
                 look(MUSE_GAZE_TARGET, 0, 0);
                 const int action = g_muse.agent_action;
-                if (action != MUSE_ACTION_NONE) {
+                if (action != MUSE_ACTION_NONE && now - speaking_since > 400) {
                     g_muse.agent_action = MUSE_ACTION_NONE;
                     play_action(action, wake);
+                    lean = mid;
                     continue;
                 }
-                clips_show(s_idle->first + idle);
-                idle = (idle + 1) % s_idle->count;
-                tick(wake, s_idle->fps);
+                // Sway to the other side on each new syllable; settle in pauses
+                // and blink at the end of a sentence.
+                const float level = g_muse.mouth_level;
+                if (level > 0.45f && last_level <= 0.3f) {
+                    sway = -sway;
+                }
+                last_level = level;
+                if (level < 0.12f) {
+                    if (!quiet_since) {
+                        quiet_since = now;
+                    } else if (now - quiet_since > 350 && quiet_since > 0) {
+                        g_muse.blink_request = true;
+                        quiet_since = -1;  // once per pause
+                    }
+                } else {
+                    quiet_since = 0;
+                }
+                lean_toward(&lean, quiet_since != 0 ? mid : mid + sway);
+                tick(wake, 14);
             } else if (state == MUSE_AGENT_THINKING || state == MUSE_AGENT_CONNECTING ||
                        state == MUSE_AGENT_LISTENING) {
                 // Thinking: keep the head tilted and glance up and aside.
-                look(MUSE_GAZE_TARGET, -0.7f, -0.8f);
+                look(MUSE_GAZE_TARGET, (now / 1500) % 2 ? 0.5f : -0.7f, -0.8f);
                 tick(wake, 10);
             } else {
                 break;  // the reply has finished, or none came
             }
         }
         if (!interrupted) {
+            // Settle: back to upright, a happy look, and let the last words linger.
+            while (lean != mid) {
+                lean_toward(&lean, mid);
+                tick(wake, 14);
+            }
             if (tilted) {
                 play(s_listen, s_listen->count - 1, 0, 0, wake);
             }
@@ -288,6 +338,15 @@ static void react_talk(TickType_t *wake)
                 g_muse.agent_action = MUSE_ACTION_NONE;
                 play_action(action, wake);
             }
+            if (!tilted || speaking_since) {
+                g_muse.expr_override = MUSE_EXPR_HAPPY;
+                for (int i = 0; i < 7; i++) {
+                    talk_caption();
+                    clips_show(s_idle->first + i);
+                    tick(wake, s_idle->fps);
+                }
+            }
+            s_caption_until_ms = muse_now_ms() + 1200;
             return;
         }
     }

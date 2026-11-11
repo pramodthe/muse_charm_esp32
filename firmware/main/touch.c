@@ -2,9 +2,11 @@
 // Touch gestures (drag, tap, belly tap, hold, swipe) and the BOOT button.
 //
 // While a finger is down its position is published in g_muse so the eyes can
-// follow it. Gestures become events for the behaviour task. Holding the
-// screen still starts a voice chat turn when voice chat is available (linked
-// to the companion server, which has a Deepgram key), and a squeeze otherwise.
+// follow it. Gestures become events for the behaviour task.
+//
+//   screen held still   squeeze; keep holding 5 s for setup
+//   BOOT held           talk to Muse (push to talk) when voice chat is on;
+//                       otherwise a squeeze, and 3 s opens setup
 
 #include "touch.h"
 
@@ -15,14 +17,13 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "muse.h"
-#include "panel.h"
 #include "setup_ui.h"
 
 #define BOOT_BUTTON GPIO_NUM_0
 #define BUTTON_POLL_MS 30
-#define SETUP_HOLD_MS 3000
-#define SCREEN_SETUP_HOLD_MS 5000  // without voice chat, holding the screen this long opens setup
-#define TALK_HOLD_MS 350
+#define BUTTON_DEBOUNCE_POLLS 4    // ~100 ms low: supply glitches on GPIO0 are shorter
+#define SETUP_HOLD_MS 3000         // BOOT, without voice chat
+#define SCREEN_SETUP_HOLD_MS 5000
 #define LONG_PRESS_MS 550
 #define TAP_MAX_MS 450
 #define TAP_MAX_MOVE_PX 24
@@ -73,12 +74,11 @@ static void on_touch(lv_event_t *e)
         if (move > s_max_move) {
             s_max_move = move;
         }
-        const bool chat = g_muse.agent_state != MUSE_AGENT_OFF;
-        if (!s_long_fired && s_max_move < TAP_MAX_MOVE_PX && now - s_press_ms >= (chat ? TALK_HOLD_MS : LONG_PRESS_MS)) {
+        if (!s_long_fired && s_max_move < TAP_MAX_MOVE_PX && now - s_press_ms >= LONG_PRESS_MS) {
             s_long_fired = true;
-            behavior_post(chat ? MUSE_EV_TALK : MUSE_EV_LONG_PRESS);
+            behavior_post(MUSE_EV_LONG_PRESS);
         }
-        if (!chat && s_long_fired && !s_setup_fired && s_max_move < TAP_MAX_MOVE_PX &&
+        if (s_long_fired && !s_setup_fired && s_max_move < TAP_MAX_MOVE_PX &&
                 now - s_press_ms >= SCREEN_SETUP_HOLD_MS) {
             s_setup_fired = true;
             behavior_post(MUSE_EV_SETUP);
@@ -90,7 +90,7 @@ static void on_touch(lv_event_t *e)
     case LV_EVENT_PRESS_LOST: {
         g_muse.touch_down = false;
         if (s_long_fired) {
-            break;  // the squeeze or talk turn ends when behaviour sees the finger lift
+            break;  // the squeeze ends when behaviour sees the finger lift
         }
         const int dx = p.x - s_press_x, dy = p.y - s_press_y;
         if (abs(dx) >= SWIPE_MIN_DX_PX && abs(dx) > abs(dy) * 3 / 2) {
@@ -106,25 +106,27 @@ static void on_touch(lv_event_t *e)
     }
 }
 
-// BOOT button: press for a squeeze, hold 3 s for the setup page.
+// BOOT button: hold to talk when voice chat is on; otherwise a squeeze, and
+// holding 3 s opens setup.
 static void poll_button(lv_timer_t *t)
 {
     (void)t;
-    static bool was_down, setup_fired, low_last_poll;
+    static bool was_down, setup_fired, talking;
+    static int low_polls;
     static int64_t pressed_ms;
-    // Two low readings in a row (60 ms), so a supply glitch isn't a press.
+    // Several low readings in a row, so a supply glitch isn't a press.
     const bool low = gpio_get_level(BOOT_BUTTON) == 0;
-    const bool down = low && (low_last_poll || was_down) && !setup_ui_active();
-    low_last_poll = low;
+    low_polls = low ? low_polls + 1 : 0;
+    const bool down = !setup_ui_active() && (was_down ? low : low_polls >= BUTTON_DEBOUNCE_POLLS);
     const int64_t now = muse_now_ms();
     if (down && !was_down) {
-        ESP_LOGI("touch", "BOOT pressed");
-        panel_wake();  // in case the screen went black
+        talking = g_muse.agent_state != MUSE_AGENT_OFF;
+        ESP_LOGI("touch", "BOOT pressed%s", talking ? ": talk" : "");
         pressed_ms = now;
         setup_fired = false;
         g_muse.button_down = true;
-        behavior_post(MUSE_EV_BUTTON);
-    } else if (down && !setup_fired && now - pressed_ms >= SETUP_HOLD_MS) {
+        behavior_post(talking ? MUSE_EV_TALK : MUSE_EV_BUTTON);
+    } else if (down && !talking && !setup_fired && now - pressed_ms >= SETUP_HOLD_MS) {
         setup_fired = true;
         behavior_post(MUSE_EV_SETUP);
     } else if (!down && was_down) {

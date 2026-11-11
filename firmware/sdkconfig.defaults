@@ -35,6 +35,11 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 # mbedTLS, WiFi and lwIP buffers in PSRAM keep internal RAM free for the display and audio
 CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+# Voice chat streams audio both ways with WiFi in modem sleep (lower current);
+# bigger TCP windows keep it flowing despite the slower acknowledgements.
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=16384
+CONFIG_LWIP_TCP_WND_DEFAULT=16384
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=16
 # Internal RAM is shared by the display, audio and WiFi: keep WiFi buffers small
 # or in PSRAM, and its code in flash rather than IRAM.
 CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=8
