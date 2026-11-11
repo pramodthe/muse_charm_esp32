@@ -11,17 +11,18 @@
 //   stroke the head petting: happy eyes, a purr, the head leans into your hand
 //   hold the screen squeeze while held, then cheer; 5 s opens setup
 //   hold BOOT       voice chat: comes close and listens while held, thinks,
-//                   then answers in close-up with the body swaying and
-//                   subtitles underneath, stepping back for gestures (a
-//                   squeeze instead when voice chat is not available; 3 s
-//                   opens setup)
+//                   under a thought cloud, then answers in close-up with the
+//                   body swaying and subtitles underneath. The AI moves the
+//                   body with its tools: wave, dance, come closer, sleep...
+//                   (a squeeze instead when voice chat is not available;
+//                   3 s opens setup)
 //   swipe           brushed aside, glances that way
 //   tilt            leans against the tilt to stay upright
 //   shake           dizzy (interrupts anything)
 //   voice           without voice chat: looks up, mouth follows your voice
 //
 // Claude Code companion (companion.c), with a caption under Muse:
-//   thinking        glances up and aside
+//   thinking        a thought cloud, glancing up at it
 //   working         reads the caption, left to right
 //   needs you       comes up to the glass and waves (up to three times)
 //   hello / bye     waves;  done: cheers;  a tool failed: a puzzled look;
@@ -96,6 +97,10 @@ static int64_t s_caption_until_ms;  // an event's caption stays up until then
 static int64_t s_active_ms;         // when something last happened (for dozing off)
 static int64_t s_next_fidget_ms;
 static int s_idle_pos;              // where the breathing loop is
+static muse_shot_t s_talk_shot;     // the shot for a reply; the AI can change it
+static int s_emote = -1;            // a face the AI asked for, until s_emote_until_ms
+static int64_t s_emote_until_ms;
+static bool s_sleep_asked;          // the AI said good night
 static float s_home_x;              // where the face rests, in frame pixels
 static const muse_clip_t *s_idle, *s_wave, *s_giggle, *s_cheer, *s_lean, *s_dizzy, *s_listen, *s_squeeze;
 
@@ -146,6 +151,7 @@ static void look(int mode, float x, float y)
 static void rest(void)
 {
     g_muse.expr_override = -1;
+    g_muse.thought = false;
     look(MUSE_GAZE_AUTO, 0, 0);
     camera_lean(0);
     camera_shot(MUSE_SHOT_WIDE, 450);
@@ -308,13 +314,6 @@ static void react_error(TickType_t *wake)
     head_shake(true, wake);
 }
 
-static void play_action(int action, TickType_t *wake)
-{
-    const muse_clip_t *clips[] = {s_wave, s_giggle, s_cheer, s_dizzy};
-    if (action >= 0 && action < 4) {
-        play_all(clips[action], wake);
-    }
-}
 
 // Show the conversation's caption under Muse (agent.c decides what it says).
 static void talk_caption(void)
@@ -331,17 +330,137 @@ static void lean_toward(int *lean, int target)
     clips_show(s_lean->first + *lean);
 }
 
+// A little dance: sway to a bar of music, then a flourish, three times.
+static void dance(TickType_t *wake)
+{
+    static const int8_t steps[] = {3, -3, 3, -3, 0};
+    const int mid = s_lean->count / 2;
+    int lean = mid;
+    look(MUSE_GAZE_TARGET, 0, 0);
+    for (int bar = 0; bar < 3 && !g_muse.shake; bar++) {
+        g_muse.expr_override = MUSE_EXPR_HAPPY;
+        audio_play(MUSE_SOUND_DANCE);
+        for (unsigned s = 0; s < sizeof(steps) && !g_muse.shake; s++) {
+            while (lean != mid + steps[s]) {
+                lean_toward(&lean, mid + steps[s]);
+                tick(wake, 18);
+            }
+        }
+        if (bar == 0) {
+            play_all(s_giggle, wake);
+        } else if (bar == 1) {
+            if (play(s_squeeze, 0, s_squeeze->count - 1, 20, wake)) {
+                play(s_squeeze, s_squeeze->count - 1, 0, 20, wake);
+            }
+        } else {
+            play_all(s_cheer, wake);
+        }
+    }
+}
+
+// Do one of the moves the AI asked for (its muse_do tool). Body moves step the
+// camera back so they are in view; faces and camera moves just take effect.
+// Returns true if the body moved.
+static bool perform(int move, TickType_t *wake)
+{
+    const int mid = s_lean->count / 2;
+    const bool whole_body = move == MUSE_MOVE_WAVE || move == MUSE_MOVE_GIGGLE || move == MUSE_MOVE_CHEER ||
+                            move == MUSE_MOVE_DANCE || move == MUSE_MOVE_SPIN || move == MUSE_MOVE_BOUNCE;
+    if (whole_body && s_talk_shot != MUSE_SHOT_WIDE) {
+        camera_shot(MUSE_SHOT_MEDIUM, 300);
+    }
+    int lean = mid;
+    switch (move) {
+    case MUSE_MOVE_WAVE:
+        play_all(s_wave, wake);
+        break;
+    case MUSE_MOVE_GIGGLE:
+        play_all(s_giggle, wake);
+        break;
+    case MUSE_MOVE_CHEER:
+        play_all(s_cheer, wake);
+        break;
+    case MUSE_MOVE_DANCE:
+        dance(wake);
+        break;
+    case MUSE_MOVE_SPIN:
+        play_all(s_dizzy, wake);
+        g_muse.shake = false;
+        break;
+    case MUSE_MOVE_SHAKE_HEAD:
+        head_shake(false, wake);
+        break;
+    case MUSE_MOVE_TILT_HEAD:
+        g_muse.expr_override = MUSE_EXPR_NORMAL;
+        if (play_all(s_listen, wake)) {
+            for (int i = 0; i < 6; i++) {
+                clips_refresh();
+                tick(wake, 10);
+            }
+            play(s_listen, s_listen->count - 1, 0, 0, wake);
+        }
+        break;
+    case MUSE_MOVE_BOUNCE:
+        g_muse.expr_override = MUSE_EXPR_HAPPY;
+        for (int i = 0; i < 2 && play(s_squeeze, 0, s_squeeze->count - 1, 20, wake); i++) {
+            play(s_squeeze, s_squeeze->count - 1, 0, 20, wake);
+        }
+        break;
+    case MUSE_MOVE_SWAY:
+        for (int i = 0; i < 4 && !g_muse.shake; i++) {
+            const int to = mid + (i % 2 ? -2 : 2);
+            while (lean != to) {
+                lean_toward(&lean, to);
+                tick(wake, 12);
+            }
+        }
+        while (lean != mid) {
+            lean_toward(&lean, mid);
+            tick(wake, 12);
+        }
+        break;
+    case MUSE_MOVE_SMILE:
+    case MUSE_MOVE_SURPRISED:
+        s_emote = move == MUSE_MOVE_SMILE ? MUSE_EXPR_HAPPY : MUSE_EXPR_SURPRISED;
+        s_emote_until_ms = muse_now_ms() + 1600;
+        g_muse.expr_override = s_emote;
+        return false;
+    case MUSE_MOVE_COME_CLOSER:
+        s_talk_shot = MUSE_SHOT_PEEK;
+        camera_shot(s_talk_shot, 450);
+        return false;
+    case MUSE_MOVE_STEP_BACK:
+        s_talk_shot = MUSE_SHOT_WIDE;
+        camera_shot(s_talk_shot, 450);
+        return false;
+    case MUSE_MOVE_SLEEP:
+        s_sleep_asked = true;
+        return false;
+    default:
+        return false;
+    }
+    if (whole_body) {
+        camera_shot(s_talk_shot, 400);
+    }
+    return true;
+}
+
 // Voice chat: listen while BOOT is held, think, then answer. The camera
 // directs it like a scene: Muse comes close and tilts its head to listen,
 // leaning in a little as you speak; it answers in close-up, the mouth
 // following the words and the body swaying on each syllable, with subtitles
 // underneath; it steps back for a gesture so the arms are in view, and pulls
-// back to the wide shot at the end. Holding BOOT again interrupts.
+// back to the wide shot at the end. While it thinks, a thought cloud hangs
+// over its head. The AI can move the body with its tools (perform() above).
+// Holding BOOT again interrupts.
 static void react_talk(TickType_t *wake)
 {
     const int mid = s_lean->count / 2;
     for (;;) {
-        g_muse.agent_action = MUSE_ACTION_NONE;
+        s_talk_shot = MUSE_SHOT_CLOSE;
+        s_emote_until_ms = 0;
+        s_sleep_asked = false;
+        g_muse.thought = false;
         if (!agent_begin_turn()) {
             react_error(wake);
             return;
@@ -368,7 +487,7 @@ static void react_talk(TickType_t *wake)
         bool tilted = true, interrupted = false;
         int lean = mid, sway = 1;
         float last_level = 0;
-        int64_t speaking_since = 0, quiet_since = 0;
+        int64_t speaking_since = 0, quiet_since = 0, move_wait_since = 0, moved_at = 0;
         const int64_t give_up = muse_now_ms() + CHAT_MAX_MS;
         while (muse_now_ms() < give_up && !g_muse.shake) {
             if (g_muse.agent_error) {
@@ -393,18 +512,16 @@ static void react_talk(TickType_t *wake)
                     tilted = false;
                     speaking_since = now;
                 }
-                g_muse.expr_override = MUSE_EXPR_TALK;
+                g_muse.thought = false;
                 look(MUSE_GAZE_TARGET, 0, 0);
-                const int action = g_muse.agent_action;
-                if (action != MUSE_ACTION_NONE && now - speaking_since > 400) {
-                    // Step back so the gesture is in view, then come close again.
-                    g_muse.agent_action = MUSE_ACTION_NONE;
-                    camera_shot(MUSE_SHOT_MEDIUM, 300);
-                    play_action(action, wake);
-                    camera_shot(MUSE_SHOT_CLOSE, 400);
-                    lean = mid;
+                // What the AI asked the body to do, a moment into the reply.
+                if (now - speaking_since > 400 && agent_move_waiting()) {
+                    if (perform(agent_next_move(), wake)) {
+                        lean = mid;
+                    }
                     continue;
                 }
+                g_muse.expr_override = now < s_emote_until_ms ? s_emote : MUSE_EXPR_TALK;
                 // Sway to the other side on each new syllable; settle in pauses
                 // and blink at the end of a sentence.
                 const float level = g_muse.mouth_level;
@@ -426,8 +543,28 @@ static void react_talk(TickType_t *wake)
                 tick(wake, 14);
             } else if (state == MUSE_AGENT_THINKING || state == MUSE_AGENT_CONNECTING ||
                        state == MUSE_AGENT_LISTENING) {
-                // Thinking: keep the head tilted and glance up and aside.
-                look(MUSE_GAZE_TARGET, (now / 1500) % 2 ? 0.5f : -0.7f, -0.8f);
+                // Thinking: head tilted, a thought cloud overhead, eyes on it.
+                g_muse.thought = !moved_at;
+                look(MUSE_GAZE_TARGET, 0.6f, -0.9f);
+                if (!agent_move_waiting()) {
+                    move_wait_since = 0;
+                } else if (!move_wait_since) {
+                    move_wait_since = now;
+                } else if (now - move_wait_since > 1500) {
+                    // The AI answered with moves and no words (yet): do them.
+                    g_muse.thought = false;
+                    if (tilted) {
+                        play(s_listen, s_listen->count - 1, 0, 0, wake);
+                        tilted = false;
+                    }
+                    perform(agent_next_move(), wake);
+                    moved_at = muse_now_ms();
+                    continue;
+                }
+                if (moved_at && !agent_move_waiting() && now - moved_at > 4000) {
+                    agent_done_waiting();  // moves were the whole answer
+                    continue;
+                }
                 clips_refresh();
                 tick(wake, 10);
             } else {
@@ -435,6 +572,7 @@ static void react_talk(TickType_t *wake)
             }
         }
         camera_lean(0);
+        g_muse.thought = false;
         if (!interrupted) {
             // Settle: back to upright, a happy look as the camera pulls back,
             // and let the last words linger.
@@ -445,11 +583,11 @@ static void react_talk(TickType_t *wake)
             if (tilted) {
                 play(s_listen, s_listen->count - 1, 0, 0, wake);
             }
-            const int action = g_muse.agent_action;
-            if (action != MUSE_ACTION_NONE) {
-                g_muse.agent_action = MUSE_ACTION_NONE;
-                camera_shot(MUSE_SHOT_MEDIUM, 300);
-                play_action(action, wake);
+            while (agent_move_waiting() && !g_muse.shake) {
+                perform(agent_next_move(), wake);  // whatever the AI asked for that is still to do
+            }
+            if (s_talk_shot == MUSE_SHOT_PEEK) {
+                breathe_for(1200, busy, wake);  // stay close a moment longer
             }
             camera_shot(MUSE_SHOT_WIDE, 700);
             if (!tilted || speaking_since) {
@@ -578,9 +716,12 @@ static void fidget(TickType_t *wake)
     }
 }
 
+static bool s_sound_asleep;  // told to sleep: being carried about doesn't wake Muse, a touch does
+
 static bool waking(void)
 {
-    return busy() || g_muse.moved || g_muse.voice_active || g_muse.claude_mood >= MUSE_MOOD_THINKING;
+    return busy() || (g_muse.moved && !s_sound_asleep) || g_muse.voice_active ||
+           g_muse.claude_mood >= MUSE_MOOD_THINKING;
 }
 
 // After a quiet while Muse dozes off: heavy eyelids, then eyes closed, slow
@@ -601,7 +742,7 @@ static void doze(TickType_t *wake)
     ESP_LOGI(TAG, "dozing off");
     g_muse.expr_override = MUSE_EXPR_SLEEP;
     camera_shot(MUSE_SHOT_MEDIUM, 2500);
-    int level = CONFIG_MUSE_BRIGHTNESS;
+    int level = panel_awake_brightness();
     while (!waking()) {
         if (level > SLEEP_BRIGHTNESS) {
             level = level - 4 > SLEEP_BRIGHTNESS ? level - 4 : SLEEP_BRIGHTNESS;
@@ -610,7 +751,7 @@ static void doze(TickType_t *wake)
         breathe(wake, SLEEP_FPS);
     }
     ESP_LOGI(TAG, "awake");
-    panel_brightness(CONFIG_MUSE_BRIGHTNESS);
+    panel_brightness(panel_awake_brightness());
     g_muse.moved = false;
     muse_event_t next;
     if (g_muse.shake || (xQueuePeek(s_events, &next, 0) == pdTRUE && next == MUSE_EV_TALK)) {
@@ -700,7 +841,7 @@ static void follow_claude(void)
     const int mood = g_muse.claude_mood;
     switch (mood) {
     case MUSE_MOOD_THINKING:
-        look(MUSE_GAZE_TARGET, (now / 2600) % 2 ? 0.6f : -0.7f, -0.8f);  // up and aside
+        look(MUSE_GAZE_TARGET, (now / 2600) % 3 ? 0.6f : 0.0f, (now / 2600) % 3 ? -0.9f : 0.0f);  // up at the cloud
         break;
     case MUSE_MOOD_WORKING:
         look(MUSE_GAZE_TARGET, ((float)((now / 900) % 4) - 1.5f) * 0.35f, 0.9f);  // reading the caption
@@ -712,6 +853,7 @@ static void follow_claude(void)
         look(MUSE_GAZE_AUTO, 0, 0);
         break;
     }
+    g_muse.thought = mood == MUSE_MOOD_THINKING;  // Claude is thinking: so is Muse
     if (now < s_caption_until_ms) {
         return;  // an event's caption is still up
     }
@@ -794,6 +936,16 @@ static void behavior_task(void *arg)
             react_dizzy(&wake);
             g_muse.moved = false;
             settle();
+            active();
+            continue;
+        }
+        if (s_sleep_asked) {
+            // The AI said good night: nod off now. (Talking set BOOT down; let go first.)
+            s_sleep_asked = false;
+            s_sound_asleep = true;
+            doze(&wake);
+            s_sound_asleep = false;
+            rest();
             active();
             continue;
         }

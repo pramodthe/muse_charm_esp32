@@ -15,6 +15,7 @@ typedef enum {
     MUSE_SOUND_LISTEN,   // "mm?"  (voice chat: listening)
     MUSE_SOUND_THINK,    // "hmm"  (voice chat: thinking)
     MUSE_SOUND_PURR,     // "prrr" (being petted)
+    MUSE_SOUND_DANCE,    // a bouncy bar of music to dance to
     MUSE_SOUND_COUNT,
 } muse_sound_t;
 

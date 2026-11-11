@@ -12,3 +12,6 @@ bool audio_start(void);
 
 // Queue a chirp. Does nothing if sound is disabled or audio failed to start.
 void audio_play(muse_sound_t sound);
+
+// Change the speaker volume (percent) until the next restart. Safe from any task.
+void audio_set_volume(int percent);

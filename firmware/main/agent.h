@@ -6,8 +6,10 @@
 //   hold BOOT        agent_begin_turn()  microphone streams to the server
 //   let go           agent_end_turn()    Muse thinks, then the reply plays
 //
-// Progress is published in g_muse.agent_state, and actions the AI asks for
-// (wave, giggle, cheer, dizzy) in g_muse.agent_action.
+// Progress is published in g_muse.agent_state. The AI also has Muse's body
+// and screen as tools: the moves it asks for queue up here for the behaviour
+// task (agent_next_move), a sign goes straight to the screen, and brightness
+// and volume are applied as they arrive.
 #pragma once
 
 #include <stdbool.h>
@@ -35,6 +37,15 @@ bool agent_listening(void);
 void agent_push_mic(const int16_t *pcm, int samples);
 int agent_pull_speech(int16_t *pcm, int samples);
 
+// For the behaviour task: the next move the AI asked for (a muse_move_t), or
+// MUSE_MOVE_NONE.
+int agent_next_move(void);
+bool agent_move_waiting(void);
+
+// For the behaviour task: stop waiting for a spoken reply (the AI answered
+// with moves only).
+void agent_done_waiting(void);
+
 // For the behaviour task: the caption to show under Muse during a
 // conversation ("Listening...", what it heard, then the reply as subtitles).
 void agent_caption(char *buf, size_t len);
@@ -42,6 +53,6 @@ void agent_caption(char *buf, size_t len);
 // For companion.c: the link and what the server says.
 void agent_on_link_lost(void);
 void agent_on_voice_ready(bool on);
-void agent_on_voice(const char *state, const char *action, const char *error, const char *heard, const char *say,
-                    int cps);
+struct cJSON;
+void agent_on_voice(const struct cJSON *msg);  // a {"type":"voice", ...} message
 void agent_on_audio(const void *data, int len);

@@ -9,11 +9,17 @@ key stays on this computer.
     Muse  -> {"type":"talk_start"}, microphone audio (binary), {"type":"talk_end"}
              {"type":"talk_stop"}                      stop the reply that is playing
     Muse <-  {"type":"voice","state":"thinking|speaking|done|error"}
-             {"type":"voice","action":"wave|giggle|cheer|dizzy"}
+             {"type":"voice","do":["wave","dance"]}   moves to perform, in order
+             {"type":"voice","show":"BRB","secs":8}   a sign at the top of the screen
+             {"type":"voice","set":{"volume":40}}     brightness and volume, in percent
              {"type":"voice","heard":"..."}           what you said (for the caption)
              {"type":"voice","say":"...","cps":17}    a sentence of the reply, sent
                                                        just before its audio (subtitles)
              reply audio (binary, 16 kHz 16-bit mono)
+
+The AI has Muse's body and screen as tools (see TOOLS below): muse_do performs
+moves, muse_show puts up a sign, muse_set changes brightness and volume, and
+claude_status reports what Claude Code is doing.
 
 Muse's voice is the Deepgram voice raised in pitch (and a little faster), so
 it sounds like the same small creature that chirps.
@@ -59,14 +65,84 @@ DEFAULTS = {
         "user's computer. You are warm, playful and curious, a little bit silly, and you talk like a "
         "kind friend, in short, bright sentences. Everything you say is spoken aloud by you, so "
         "usually answer in one short sentence, two at most, and never use lists, markdown, emojis or "
-        "stage directions. Show feelings with your body: when it fits, call muse_action to wave "
-        "(hello, goodbye), giggle (something funny), cheer (good news) or act dizzy (confused). "
+        "stage directions. You have a real body on the screen, and tools to move it. When the user "
+        "asks you to do something physical (wave, dance, spin, come closer, go to sleep), do it by "
+        "calling muse_do, and never just say you did it. Also use muse_do on your own to show "
+        "feelings: wave for hello or goodbye, giggle at something funny, cheer at good news, "
+        "tilt_head when curious, shake_head for no, surprised at a surprise. You can chain a few "
+        "moves in one call. Use muse_show to put a few words on your screen as a sign, and muse_set "
+        "when asked to change your brightness or volume. Say a short line along with any tool call. "
         "Claude Code, an AI coding assistant, often works on the same computer; if the user asks what "
         "Claude is doing or how their work is going, call claude_status and answer in a sentence."
     ),
 }
 
-ACTIONS = ["wave", "giggle", "cheer", "dizzy"]
+# What Muse can do with its body (firmware/main/behavior.c plays them).
+MOVES = {
+    "wave": "wave a hand: hello, goodbye",
+    "giggle": "a giggling wiggle: something funny",
+    "cheer": "jump with both arms up: good news, celebrating",
+    "dance": "a little dance with music, about eight seconds",
+    "spin": "wobble round and get dizzy: confused, or asked to spin",
+    "shake_head": "shake the head: no, or puzzled",
+    "tilt_head": "tilt the head to one side: curious, listening",
+    "bounce": "squeeze up and bounce: excited",
+    "sway": "sway gently from side to side",
+    "smile": "a happy face for a moment",
+    "surprised": "wide eyes for a moment",
+    "come_closer": "come right up to the glass, face filling the screen",
+    "step_back": "step back so the whole body shows",
+    "sleep": "close the eyes and go to sleep after speaking (good night)",
+}
+
+TOOLS = [
+    {
+        "name": "muse_do",
+        "description": "Move Muse's body on its screen. Give one or more moves; they are performed in order "
+                       "while and after Muse speaks. " +
+                       " ".join("%s: %s." % (name, what) for name, what in MOVES.items()),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "moves": {"type": "array", "items": {"type": "string", "enum": list(MOVES)},
+                          "description": "One to six moves, in order."},
+            },
+            "required": ["moves"],
+        },
+    },
+    {
+        "name": "muse_show",
+        "description": "Show a short sign at the top of Muse's screen for a few seconds, for example a "
+                       "word, a number or a time the user asked to see. Plain letters and digits only.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "At most 18 characters."},
+                "seconds": {"type": "integer", "description": "How long to show it, 2 to 30. Default 6."},
+            },
+            "required": ["text"],
+        },
+    },
+    {
+        "name": "muse_set",
+        "description": "Change Muse's screen brightness or speaker volume, in percent, when the user asks "
+                       "(brighter, dimmer, louder, quieter). Normal is brightness 80 and volume 65.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "brightness": {"type": "integer", "description": "10 to 100"},
+                "volume": {"type": "integer", "description": "0 to 100"},
+            },
+        },
+    },
+    {
+        "name": "claude_status",
+        "description": "What Claude Code is doing on the user's computer right now: for each "
+                       "session, the project and whether Claude is thinking, running a tool, "
+                       "waiting for the user's permission, or idle.",
+        "parameters": {"type": "object", "properties": {}},
+    },
+]
 
 
 def log(*args):
@@ -161,26 +237,7 @@ def settings_message(opts, history):
         "think": {
             "provider": {"type": opts["think_provider"], "model": opts["think_model"]},
             "prompt": opts["prompt"],
-            "functions": [
-                {
-                    "name": "muse_action",
-                    "description": "Make Muse do a short animation on its screen while it talks: wave for "
-                                   "hello or goodbye, giggle at something funny, cheer at good news, dizzy "
-                                   "when confused.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {"action": {"type": "string", "enum": ACTIONS}},
-                        "required": ["action"],
-                    },
-                },
-                {
-                    "name": "claude_status",
-                    "description": "What Claude Code is doing on the user's computer right now: for each "
-                                   "session, the project and whether Claude is thinking, running a tool, "
-                                   "waiting for the user's permission, or idle.",
-                    "parameters": {"type": "object", "properties": {}},
-                },
-            ],
+            "functions": TOOLS,
         },
         "speak": {"provider": {"type": "deepgram", "model": opts["voice"]}},
     }
@@ -419,10 +476,40 @@ class Voice:
             args = json.loads(f.get("arguments") or "{}")
         except ValueError:
             args = {}
-        if name == "muse_action" and args.get("action") in ACTIONS:
-            log("voice: action", args["action"])
-            self.link.queue_voice("json", {"type": "voice", "action": args["action"]})
-            content = json.dumps({"ok": True})
+        if not isinstance(args, dict):
+            args = {}
+        if name == "muse_do":
+            moves = args.get("moves")
+            moves = [moves] if isinstance(moves, str) else moves if isinstance(moves, list) else []
+            moves = [m for m in moves if m in MOVES][:6]
+            log("voice: muse_do", moves)
+            if moves:
+                # In order with the reply's audio, so a move lands where it was asked for.
+                self.link.queue_voice("json", {"type": "voice", "do": moves})
+            content = json.dumps({"ok": True, "doing": moves} if moves else
+                                 {"ok": False, "error": "no known moves; use: " + ", ".join(MOVES)})
+        elif name == "muse_show":
+            text = ascii_text(str(args.get("text") or ""), 18)
+            try:
+                secs = max(2, min(30, int(args.get("seconds") or 6)))
+            except (TypeError, ValueError):
+                secs = 6
+            log("voice: muse_show %r for %d s" % (text, secs))
+            if text:
+                self.link.queue_voice("json", {"type": "voice", "show": text, "secs": secs})
+            content = json.dumps({"ok": bool(text), "showing": text})
+        elif name == "muse_set":
+            chosen = {}
+            for key, low in (("brightness", 10), ("volume", 0)):
+                try:
+                    if args.get(key) is not None:
+                        chosen[key] = max(low, min(100, int(args[key])))
+                except (TypeError, ValueError):
+                    pass
+            log("voice: muse_set", chosen)
+            if chosen:
+                self.link.send_json({"type": "voice", "set": chosen})
+            content = json.dumps({"ok": bool(chosen), **chosen})
         elif name == "claude_status":
             content = self.claude_status()
             log("voice: claude_status ->", content)

@@ -24,7 +24,8 @@ typedef struct {
 } port_ctx_head_t;
 
 static esp_lcd_panel_io_handle_t s_io;
-static volatile int s_brightness = CONFIG_MUSE_BRIGHTNESS;  // percent
+static volatile int s_brightness = CONFIG_MUSE_BRIGHTNESS;  // percent, on the panel now
+static volatile int s_awake = CONFIG_MUSE_BRIGHTNESS;       // percent, while Muse is awake
 
 static void reg(uint8_t cmd, const uint8_t *data, size_t len)
 {
@@ -77,6 +78,17 @@ void panel_brightness(int percent)
         }
         bsp_display_unlock();
     }  // otherwise the keeper task applies it within a few seconds
+}
+
+void panel_set_awake_brightness(int percent)
+{
+    s_awake = percent < 10 ? 10 : percent > 100 ? 100 : percent;
+    panel_brightness(s_awake);
+}
+
+int panel_awake_brightness(void)
+{
+    return s_awake;
 }
 
 void panel_guard_start(void)

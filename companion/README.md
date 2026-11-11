@@ -112,15 +112,17 @@ Create `~/.config/muse/voice.json` to change how Muse talks, for example
 | `think_provider` / `think_model` | `anthropic` / `claude-haiku-4-5` | Any Deepgram think provider and model |
 | `prompt` | a short, playful Muse | Muse's personality |
 
-The AI can call two functions: `muse_action` (wave, giggle, cheer or dizzy) and `claude_status`
-(what your Claude Code sessions are doing), so you can ask Muse "what is Claude doing?".
+The AI has four tools: `muse_do` (moves such as wave, dance, come_closer or sleep, one or several
+in order), `muse_show` (a short sign on the screen), `muse_set` (brightness and volume) and
+`claude_status` (what your Claude Code sessions are doing). They are declared in `TOOLS` and
+carried out in `_function()` in `muse_voice.py`; the firmware performs the moves.
 
 ## Claude Code events
 
 | Claude Code | Muse |
 |---|---|
 | A session starts | Waves, shows the project name |
-| Thinking | Glances up and aside, "Thinking..." |
+| Thinking | A thought cloud overhead, "Thinking..." |
 | Running a tool | Reads the caption: "Editing face.c", "Run the tests" |
 | Waiting for your permission | Waves for attention (up to three times): "OK to flash the firmware?" |
 | A tool call fails | A quiet, puzzled look |

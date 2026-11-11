@@ -45,8 +45,9 @@ when Claude needs your OK and cheers when the reply is done.
 | Nothing | Breathes, blinks and glances around; now and then peeks at you up close, looks around, wiggles or stretches |
 | Nothing for 3 minutes | Dozes off: eyes closed, "z z Z", the screen dimmed. Touch it, pick it up or press BOOT to wake it |
 
-While Muse answers, the AI can make it wave, giggle, cheer or go dizzy. Ask "what is Claude
-doing?" and it checks on your Claude Code sessions.
+The AI has Muse's body and screen as tools, so you can just ask: "dance for me", "come closer",
+"show the word hello", "turn the volume down", "good night". Ask "what is Claude doing?" and it
+checks on your Claude Code sessions.
 
 Without the companion server, Muse is still a full interactive mascot: pressing BOOT squeezes it
 (holding 3 s opens setup), and it looks up and moves its mouth when it hears a voice. The chirps
@@ -186,12 +187,30 @@ connected online notices it after a restart.
 Hold **BOOT** on the side of the board, talk, and let go; the screen stays free for touching Muse.
 
 - Muse chirps "mm?" and tilts its head while it listens; the caption says "Listening…".
-- When you let go it hums, glances up while it thinks, and the caption shows what it heard.
+- When you let go it hums, and a thought cloud appears over its head while it thinks; the caption
+  shows what it heard.
 - The reply plays in Muse's own voice: the Deepgram voice raised a little in pitch, so it sounds
   like the same small creature that chirps. The mouth follows the words, the body sways on each
   syllable, gestures land a moment into the reply, and the reply runs underneath as subtitles
   timed to the audio.
 - Press BOOT again while Muse talks to interrupt it.
+
+### What the AI can do with Muse
+
+The model behind the voice is an agent with tools. It decides when to call them, the companion
+server carries them out (`TOOLS` in [`companion/muse_voice.py`](companion/muse_voice.py)) and the
+firmware performs them (`perform()` in `firmware/main/behavior.c`):
+
+| Tool | What it does | Try saying |
+| --- | --- | --- |
+| `muse_do` | Performs one or more moves, in order: `wave`, `giggle`, `cheer`, `dance`, `spin`, `shake_head`, `tilt_head`, `bounce`, `sway`, `smile`, `surprised`, `come_closer`, `step_back`, `sleep` | "Dance for me", "come closer", "good night" |
+| `muse_show` | Puts a short sign at the top of the screen for a few seconds | "Show the word hello" |
+| `muse_set` | Changes the screen brightness or speaker volume, until the next restart | "A bit quieter", "dim your screen" |
+| `claude_status` | Reads what your Claude Code sessions are doing | "What is Claude doing?" |
+
+Muse also uses the moves by itself to show feelings while it talks. To add a move, add it to
+`MOVES` in `muse_voice.py`, to `muse_move_t` in `muse.h` and the name table in `agent.c`, and
+play it in `perform()`.
 
 Speech to text, the reply and the voice all come from the
 [Deepgram Voice Agent API](https://developers.deepgram.com/docs/voice-agent), with Claude Haiku
@@ -261,7 +280,7 @@ from your computer (macOS `say`, or `--wav file.wav`) and saves the spoken reply
 | Claude Code | Muse |
 | --- | --- |
 | A session starts | Waves, shows the project name |
-| Thinking | Glances up and aside, "Thinking..." |
+| Thinking | A thought cloud overhead, "Thinking..." |
 | Running a tool | Reads the caption: "Editing face.c", "Run the tests" |
 | Waiting for your permission | Waves for attention (up to three times): "OK to flash the firmware?" |
 | A tool call fails | A quiet, puzzled look |

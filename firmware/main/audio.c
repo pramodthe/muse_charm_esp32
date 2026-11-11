@@ -53,6 +53,7 @@ static const char *TAG = "audio";
 
 static esp_codec_dev_handle_t s_codec;
 static QueueHandle_t s_queue;
+static volatile int s_volume = SPEAKER_VOLUME;  // what was asked for; the audio task applies it
 
 // ---------------------------------------------------------------- synth
 static const muse_note_t *s_seq;
@@ -200,7 +201,12 @@ static void audio_task(void *arg)
 #ifdef CONFIG_MUSE_DEBUG_LOG
     int64_t next_log = muse_now_ms() + 3000;
 #endif
+    int volume = SPEAKER_VOLUME;
     for (;;) {
+        if (volume != s_volume) {
+            volume = s_volume;
+            esp_codec_dev_set_out_vol(s_codec, volume);
+        }
         if (esp_codec_dev_read(s_codec, mic, sizeof(mic)) != ESP_CODEC_DEV_OK) {
             vTaskDelay(pdMS_TO_TICKS(20));
             continue;
@@ -313,6 +319,11 @@ bool audio_start(void)
     ESP_LOGI(TAG, "ES8311 ready at %d Hz (sound %s, voice %s)", SAMPLE_RATE, SOUND_ENABLED ? "on" : "off",
              VOICE_ENABLED ? "on" : "off");
     return true;
+}
+
+void audio_set_volume(int percent)
+{
+    s_volume = percent < 0 ? 0 : percent > 100 ? 100 : percent;
 }
 
 void audio_play(muse_sound_t sound)

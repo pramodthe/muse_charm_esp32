@@ -71,7 +71,6 @@ static void watchdog_task(void *arg)
 muse_state_t g_muse = {
     .expr_override = -1,
     .gaze_mode = MUSE_GAZE_AUTO,
-    .agent_action = MUSE_ACTION_NONE,
 };
 
 void app_main(void)

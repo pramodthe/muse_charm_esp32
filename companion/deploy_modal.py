@@ -4,9 +4,10 @@
 computer.
 
     python3 companion/deploy_modal.py
+    python3 companion/deploy_modal.py --code-only    after changing only the server's code
 
-Run it yourself, once (and again after changing the server's code or your
-Deepgram key). It needs a Modal account you are logged in to (`modal setup`)
+Run it yourself, once (and again after changing your Deepgram key or voice
+options). It needs a Modal account you are logged in to (`modal setup`)
 and your Deepgram key in ~/.config/muse/deepgram_key. It:
 
   1. makes a random token (the password Muse and the Claude Code hooks present)
@@ -42,10 +43,13 @@ def modal_cli():
 
 
 def main():
+    modal = modal_cli()
+    if "--code-only" in sys.argv:
+        deploy(modal)
+        return
     key, problem = muse_voice.key_status()
     if not key:
         sys.exit(problem)
-    modal = modal_cli()
     token = muse_online.token()
 
     print("Storing the Deepgram key and Muse's token in Modal (secret \"muse-companion\")...")
@@ -58,6 +62,10 @@ def main():
     if done.returncode != 0:
         sys.exit("Modal did not take the secret:\n" + done.stdout.replace(key, "<key>").replace(token, "<token>"))
 
+    deploy(modal)
+
+
+def deploy(modal):
     print("Deploying the server...")
     run = subprocess.Popen(modal + ["deploy", os.path.join(HERE, "modal_app.py")], stdout=subprocess.PIPE,
                            stderr=subprocess.STDOUT, text=True)

@@ -67,6 +67,18 @@ static const muse_note_t PURR[] = {
     END,
 };
 
+static const muse_note_t DANCE[] = {
+    {660, 660, 110, 70, 0, 0},   REST(60),
+    {880, 880, 110, 75, 0, 0},   REST(60),
+    {784, 784, 110, 70, 0, 0},   REST(60),
+    {880, 880, 110, 75, 0, 0},   REST(60),
+    {660, 660, 110, 70, 0, 0},   REST(60),
+    {988, 988, 110, 75, 0, 0},   REST(60),
+    {880, 880, 110, 75, 0, 0},   REST(60),
+    {1047, 1175, 200, 80, 7, 20},
+    END,
+};
+
 const muse_note_t *const muse_sounds[MUSE_SOUND_COUNT] = {
     [MUSE_SOUND_HELLO] = HELLO,
     [MUSE_SOUND_GIGGLE] = GIGGLE,
@@ -78,4 +90,5 @@ const muse_note_t *const muse_sounds[MUSE_SOUND_COUNT] = {
     [MUSE_SOUND_LISTEN] = LISTEN,
     [MUSE_SOUND_THINK] = THINK,
     [MUSE_SOUND_PURR] = PURR,
+    [MUSE_SOUND_DANCE] = DANCE,
 };

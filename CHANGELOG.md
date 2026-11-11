@@ -2,6 +2,10 @@
 
 ## 0.6.0 (2026-11-11)
 
+- **The AI has Muse's body and screen as tools.** `muse_do` performs moves in order (wave, giggle, cheer, dance, spin, shake_head, tilt_head, bounce, sway, smile, surprised, come_closer, step_back, sleep), `muse_show` puts up a sign, `muse_set` changes brightness and volume, alongside `claude_status`. "Dance for me", "come closer" or "good night" just work. Replaces the single `muse_action` tool.
+- A thought cloud hangs over Muse's head while it thinks, in a conversation and while Claude Code is thinking.
+- A dance: three bars of music with sways and a flourish each.
+
 - **The server can run online**, so Muse works anywhere there is WiFi with no computer on. Online mode (`MUSE_TOKEN` set) requires a token from Muse and from the hooks and turns the local beacon off. `deploy_modal.py` deploys it to Modal; a `Dockerfile` covers other hosts.
 - Muse looks for a local server first and otherwise connects to the online one over TLS, checking its certificate. `muse_companion.py pair` tells Muse the address and token once; Muse keeps them in NVS.
 - `install_hooks.py --online`: the hooks run `muse_hook.py`, which keeps only what Muse shows (no prompts, file contents or commands) and sends it in the background.

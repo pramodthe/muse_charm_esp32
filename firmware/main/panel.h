@@ -10,5 +10,11 @@
 // Start the task. Call after bsp_display_start().
 void panel_guard_start(void);
 
-// Set the display brightness (percent). Safe from any task.
+// Set the display brightness (percent) right now, for example to dim it while
+// Muse sleeps. Safe from any task.
 void panel_brightness(int percent);
+
+// The brightness while Muse is awake: menuconfig's value until something
+// changes it (the AI's muse_set tool). Setting it also applies it.
+void panel_set_awake_brightness(int percent);
+int panel_awake_brightness(void);

@@ -56,14 +56,25 @@ typedef enum {
     MUSE_MOOD_NEEDS_YOU,    // waiting for your permission
 } muse_mood_t;
 
-// Animations the AI can ask for while it talks.
+// What the AI can make Muse do (its muse_do tool; agent.c knows the names).
 typedef enum {
-    MUSE_ACTION_NONE = -1,
-    MUSE_ACTION_WAVE = 0,
-    MUSE_ACTION_GIGGLE,
-    MUSE_ACTION_CHEER,
-    MUSE_ACTION_DIZZY,
-} muse_action_t;
+    MUSE_MOVE_NONE = -1,
+    MUSE_MOVE_WAVE = 0,
+    MUSE_MOVE_GIGGLE,
+    MUSE_MOVE_CHEER,
+    MUSE_MOVE_DANCE,
+    MUSE_MOVE_SPIN,
+    MUSE_MOVE_SHAKE_HEAD,
+    MUSE_MOVE_TILT_HEAD,
+    MUSE_MOVE_BOUNCE,
+    MUSE_MOVE_SWAY,
+    MUSE_MOVE_SMILE,        // a face for a moment, not a body move
+    MUSE_MOVE_SURPRISED,
+    MUSE_MOVE_COME_CLOSER,  // the camera, for the rest of the reply
+    MUSE_MOVE_STEP_BACK,
+    MUSE_MOVE_SLEEP,        // doze off once the reply is over
+    MUSE_MOVE_COUNT,
+} muse_move_t;
 
 // State shared between tasks. Each field has one writer and is 32 bits, so
 // plain volatile access is enough.
@@ -93,7 +104,7 @@ typedef struct {
     volatile bool button_down;     // BOOT button (touch)
 
     volatile int agent_state;      // muse_agent_state_t (agent)
-    volatile int agent_action;     // muse_action_t requested by the AI, cleared by behaviour
+    volatile bool thought;         // show the thought cloud over Muse's head (behaviour)
     volatile bool agent_error;     // set by agent, cleared by behaviour
     volatile bool setup_active;    // setup portal open (wifi)
     volatile bool setup_request;   // open on-screen setup (wifi -> behaviour)

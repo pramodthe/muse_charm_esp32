@@ -7,7 +7,9 @@
 //   hold again       -> {"type":"talk_stop"} to stop the reply, then a new turn
 //   server           -> {"type":"voice_ready","on":true}  a Deepgram key is set up
 //                       {"type":"voice","state":"thinking|speaking|done|error"}
-//                       {"type":"voice","action":"wave"}  an animation to play
+//                       {"type":"voice","do":["wave","dance"]}  moves to perform (the AI's tools)
+//                       {"type":"voice","show":"BRB","secs":8}  a sign on the screen
+//                       {"type":"voice","set":{"brightness":40,"volume":80}}
 //                       {"type":"voice","heard":"..."}   what you said
 //                       {"type":"voice","say":"...","cps":17}  a sentence of the reply
 //                       reply audio (binary), paced a little ahead of playback
@@ -21,6 +23,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "audio.h"
+#include "cJSON.h"
 #include "companion.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -28,8 +32,10 @@
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/stream_buffer.h"
+#include "face.h"
 #include "freertos/task.h"
 #include "muse.h"
+#include "panel.h"
 
 static const char *TAG = "agent";
 
@@ -59,6 +65,7 @@ static volatile int64_t s_turn_end_ms;
 
 // Subtitles: sentences of the reply, shown as their audio plays.
 static QueueHandle_t s_sentences;
+static QueueHandle_t s_moves;     // muse_move_t the AI asked for, as bytes
 static SemaphoreHandle_t s_text_lock;
 static char s_heard[120];
 static sentence_t s_current;      // behaviour task only
@@ -68,7 +75,6 @@ static int64_t s_current_start;   // behaviour task only
 static int s_sent_bytes;
 static int64_t s_slowest_send_ms;
 
-static const char *const ACTIONS[] = {"wave", "giggle", "cheer", "dizzy"};
 
 static void set_state(muse_agent_state_t state)
 {
@@ -167,9 +173,39 @@ void agent_on_voice_ready(bool on)
                                       : "off: put a Deepgram key on the computer (see companion/README.md)");
 }
 
-void agent_on_voice(const char *state, const char *action, const char *error, const char *heard, const char *say,
-                    int cps)
+// The moves of a "do" list, by the names the server uses.
+static const char *const MOVES[MUSE_MOVE_COUNT] = {
+    [MUSE_MOVE_WAVE] = "wave",           [MUSE_MOVE_GIGGLE] = "giggle",
+    [MUSE_MOVE_CHEER] = "cheer",         [MUSE_MOVE_DANCE] = "dance",
+    [MUSE_MOVE_SPIN] = "spin",           [MUSE_MOVE_SHAKE_HEAD] = "shake_head",
+    [MUSE_MOVE_TILT_HEAD] = "tilt_head", [MUSE_MOVE_BOUNCE] = "bounce",
+    [MUSE_MOVE_SWAY] = "sway",           [MUSE_MOVE_SMILE] = "smile",
+    [MUSE_MOVE_SURPRISED] = "surprised", [MUSE_MOVE_COME_CLOSER] = "come_closer",
+    [MUSE_MOVE_STEP_BACK] = "step_back", [MUSE_MOVE_SLEEP] = "sleep",
+};
+
+static void queue_moves(const cJSON *list)
 {
+    const cJSON *item;
+    cJSON_ArrayForEach(item, list) {
+        const char *name = cJSON_GetStringValue(item);
+        for (int i = 0; name && i < MUSE_MOVE_COUNT; i++) {
+            if (strcmp(name, MOVES[i]) == 0) {
+                const uint8_t move = (uint8_t)i;
+                xQueueSend(s_moves, &move, 0);
+                ESP_LOGI(TAG, "move: %s", name);
+            }
+        }
+    }
+}
+
+void agent_on_voice(const cJSON *msg)
+{
+    const char *state = cJSON_GetStringValue(cJSON_GetObjectItem(msg, "state"));
+    const char *heard = cJSON_GetStringValue(cJSON_GetObjectItem(msg, "heard"));
+    const char *say = cJSON_GetStringValue(cJSON_GetObjectItem(msg, "say"));
+    const char *show = cJSON_GetStringValue(cJSON_GetObjectItem(msg, "show"));
+    const cJSON *set = cJSON_GetObjectItem(msg, "set");
     if (heard && s_text_lock) {
         xSemaphoreTake(s_text_lock, portMAX_DELAY);
         snprintf(s_heard, sizeof(s_heard), "%s", heard);
@@ -178,23 +214,38 @@ void agent_on_voice(const char *state, const char *action, const char *error, co
     }
     if (say && s_sentences && !s_turn_active) {
         // It plays after the reply audio already waiting in the buffer.
+        const cJSON *cps = cJSON_GetObjectItem(msg, "cps");
         sentence_t sentence = {
             .at_ms = muse_now_ms() + (int64_t)xStreamBufferBytesAvailable(s_speech) / BYTES_PER_MS,
-            .cps = cps > 0 ? cps : DEFAULT_CPS,
+            .cps = cJSON_IsNumber(cps) && cps->valueint > 0 ? cps->valueint : DEFAULT_CPS,
         };
         snprintf(sentence.text, sizeof(sentence.text), "%s", say);
         xQueueSend(s_sentences, &sentence, 0);
     }
-    if (action) {
-        for (int i = 0; i < 4; i++) {
-            if (strcmp(action, ACTIONS[i]) == 0) {
-                g_muse.agent_action = i;
-                ESP_LOGI(TAG, "action: %s", action);
-            }
+    // The AI's tools: moves, a sign, brightness and volume.
+    if (s_moves && !s_turn_active) {
+        queue_moves(cJSON_GetObjectItem(msg, "do"));
+    }
+    if (show) {
+        const cJSON *secs = cJSON_GetObjectItem(msg, "secs");
+        ESP_LOGI(TAG, "sign: %s", show);
+        face_show_sign(show, (cJSON_IsNumber(secs) ? secs->valueint : 6) * 1000);
+    }
+    if (cJSON_IsObject(set)) {
+        const cJSON *brightness = cJSON_GetObjectItem(set, "brightness");
+        const cJSON *volume = cJSON_GetObjectItem(set, "volume");
+        if (cJSON_IsNumber(brightness)) {
+            ESP_LOGI(TAG, "brightness %d %%", brightness->valueint);
+            panel_set_awake_brightness(brightness->valueint);
+        }
+        if (cJSON_IsNumber(volume)) {
+            ESP_LOGI(TAG, "volume %d %%", volume->valueint);
+            audio_set_volume(volume->valueint);
         }
     }
     if (state && strcmp(state, "error") == 0) {
-        ESP_LOGW(TAG, "the computer says: %s", error ? error : "error");
+        const char *error = cJSON_GetStringValue(cJSON_GetObjectItem(msg, "error"));
+        ESP_LOGW(TAG, "the server says: %s", error ? error : "error");
         fail("voice chat failed");
         return;
     }
@@ -233,8 +284,8 @@ void agent_init(void)
     s_mic = xStreamBufferCreateStatic(MIC_BUFFER_BYTES, 1, mic, &s_mic_ctrl);
     s_speech = xStreamBufferCreateStatic(SPEECH_BUFFER_BYTES, 1, speech, &s_speech_ctrl);
     s_sentences = xQueueCreate(8, sizeof(sentence_t));
+    s_moves = xQueueCreate(8, sizeof(uint8_t));
     s_text_lock = xSemaphoreCreateMutex();
-    g_muse.agent_action = MUSE_ACTION_NONE;
     set_state(MUSE_AGENT_OFF);
     xTaskCreatePinnedToCore(agent_task, "muse_agent", 4 * 1024, NULL, 4, NULL, 0);
 }
@@ -259,6 +310,9 @@ bool agent_begin_turn(void)
     s_start_due = true;
     sentence_t old;
     while (s_sentences && xQueueReceive(s_sentences, &old, 0) == pdTRUE) {
+    }
+    if (s_moves) {
+        xQueueReset(s_moves);
     }
     s_current.text[0] = '\0';
     xSemaphoreTake(s_text_lock, portMAX_DELAY);
@@ -314,6 +368,24 @@ int agent_pull_speech(int16_t *pcm, int samples)
         return 0;
     }
     return (int)(xStreamBufferReceive(s_speech, pcm, samples * sizeof(int16_t), 0) / sizeof(int16_t));
+}
+
+int agent_next_move(void)
+{
+    uint8_t move;
+    return s_moves && xQueueReceive(s_moves, &move, 0) == pdTRUE ? (int)move : MUSE_MOVE_NONE;
+}
+
+bool agent_move_waiting(void)
+{
+    return s_moves && uxQueueMessagesWaiting(s_moves) > 0;
+}
+
+void agent_done_waiting(void)
+{
+    if (g_muse.agent_state == MUSE_AGENT_THINKING) {
+        set_state(MUSE_AGENT_IDLE);
+    }
 }
 
 // ---------------------------------------------------------------- captions

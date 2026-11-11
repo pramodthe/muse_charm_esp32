@@ -35,6 +35,8 @@
 #define COL_TONGUE 0xe07a80
 #define COL_CAPTION 0xF4EEE8
 #define COL_ZZZ 0xD8D0C8
+#define COL_CLOUD 0xF4EEE8
+#define COL_CLOUD_DOT 0xC4BAB0
 
 // One face object, with its last layout cached so unchanged parts are not
 // invalidated (and redrawn) every tick.
@@ -52,6 +54,12 @@ static lv_obj_t *s_setup_hint;
 static lv_obj_t *s_caption;
 static lv_obj_t *s_zzz;
 static int s_zzz_step = -1;
+// The thought cloud: body, two bumps on top, two bubbles trailing down toward
+// the head, and three dots that light up in turn.
+static part_t s_cloud[5], s_cloud_dot[3];
+static int s_cloud_lit = -1;
+static lv_obj_t *s_sign;
+static int64_t s_sign_until_ms;  // LVGL lock
 static char s_caption_text[64];  // what the caption shows (behaviour task)
 static bool s_caption_on;        // caption has text (LVGL lock)
 
@@ -299,6 +307,37 @@ void face_apply(void)
         part_hide(&s_round_mouth);
     }
 
+    // A thought cloud above the head while Muse thinks.
+    if (g_muse.thought) {
+        const int bw = zs(62), bh = zs(30);
+        const float cx = muse_clampf((ex[0] + ex[1]) * 0.5f + 67.0f * z, bw * 0.5f + 8.0f,
+                                     hdr->width - bw * 0.5f - 8.0f);
+        const float cy = fmaxf((ey[0] + ey[1]) * 0.5f - 94.0f * z, bh * 0.5f + zs(13) + 6.0f);
+        part_show(&s_cloud[0], cx - bw * 0.18f, cy - bh * 0.38f, zs(24), zs(24));
+        part_show(&s_cloud[1], cx + bw * 0.12f, cy - bh * 0.45f, zs(30), zs(30));
+        part_show(&s_cloud[2], cx, cy, bw, bh);
+        part_show(&s_cloud[3], cx - 2.0f * z, cy + 30.0f * z, zs(9), zs(9));
+        part_show(&s_cloud[4], cx + 2.0f * z, cy + 43.0f * z, zs(6), zs(6));
+        const int lit = (int)((muse_now_ms() / 350) % 3);
+        for (int i = 0; i < 3; i++) {
+            const int d = i == lit ? zs(8) : zs(6);
+            part_show(&s_cloud_dot[i], cx + (i - 1) * bw * 0.22f, cy, d, d);
+        }
+        if (lit != s_cloud_lit) {
+            s_cloud_lit = lit;
+            for (int i = 0; i < 3; i++) {
+                lv_obj_set_style_bg_color(s_cloud_dot[i].obj, lv_color_hex(i == lit ? COL_LINE : COL_CLOUD_DOT), 0);
+            }
+        }
+    } else {
+        for (int i = 0; i < 5; i++) {
+            part_hide(&s_cloud[i]);
+        }
+        for (int i = 0; i < 3; i++) {
+            part_hide(&s_cloud_dot[i]);
+        }
+    }
+
     // "z z Z" drifting up beside the head while Muse sleeps.
     const bool asleep = expr == MUSE_EXPR_SLEEP;
     if (asleep == lv_obj_has_flag(s_zzz, LV_OBJ_FLAG_HIDDEN)) {
@@ -385,6 +424,10 @@ static void face_tick(lv_timer_t *t)
             lv_obj_add_flag(s_setup_hint, LV_OBJ_FLAG_HIDDEN);
         }
     }
+    if (s_sign_until_ms && now >= s_sign_until_ms) {
+        s_sign_until_ms = 0;
+        lv_obj_add_flag(s_sign, LV_OBJ_FLAG_HIDDEN);
+    }
     // The caption shares its place with the setup hint.
     const bool caption = s_caption_on && !g_muse.setup_active;
     if (caption == lv_obj_has_flag(s_caption, LV_OBJ_FLAG_HIDDEN)) {
@@ -395,6 +438,22 @@ static void face_tick(lv_timer_t *t)
         }
     }
     face_apply();
+}
+
+void face_show_sign(const char *text, int ms)
+{
+    if (!s_sign || !text || !bsp_display_lock(500)) {
+        return;
+    }
+    lv_label_set_text(s_sign, text);
+    if (text[0] && ms > 0) {
+        lv_obj_remove_flag(s_sign, LV_OBJ_FLAG_HIDDEN);
+        s_sign_until_ms = muse_now_ms() + ms;
+    } else {
+        lv_obj_add_flag(s_sign, LV_OBJ_FLAG_HIDDEN);
+        s_sign_until_ms = 0;
+    }
+    bsp_display_unlock();
 }
 
 void face_set_caption(const char *text)
@@ -428,6 +487,30 @@ void face_create(lv_obj_t *parent)
     part_init(&s_open_mouth, make_arc(parent, COL_MOUTH, false, 0, 180));
     part_init(&s_tongue, make_blob(parent, COL_TONGUE));
     part_init(&s_round_mouth, make_blob(parent, COL_MOUTH));
+
+    for (int i = 0; i < 5; i++) {
+        part_init(&s_cloud[i], make_blob(parent, COL_CLOUD));
+    }
+    for (int i = 0; i < 3; i++) {
+        part_init(&s_cloud_dot[i], make_blob(parent, COL_CLOUD_DOT));
+    }
+
+    // A sign the AI can put up (muse_show), at the top of the screen.
+    s_sign = lv_label_create(parent);
+    lv_label_set_text(s_sign, "");
+    lv_obj_set_size(s_sign, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_max_width(s_sign, 300, 0);
+    lv_obj_set_style_text_font(s_sign, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_align(s_sign, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(s_sign, lv_color_hex(0x2A211C), 0);
+    lv_obj_set_style_bg_color(s_sign, lv_color_hex(COL_CLOUD), 0);
+    lv_obj_set_style_bg_opa(s_sign, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(s_sign, 18, 0);
+    lv_obj_set_style_pad_hor(s_sign, 16, 0);
+    lv_obj_set_style_pad_ver(s_sign, 6, 0);
+    lv_obj_align(s_sign, LV_ALIGN_TOP_MID, 0, 12);
+    lv_obj_remove_flag(s_sign, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(s_sign, LV_OBJ_FLAG_HIDDEN);
 
     s_zzz = lv_label_create(parent);
     lv_label_set_text(s_zzz, "");
