@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.0 (2026-11-12)
+
+- **Type to Muse.** The web app's message box is now a real chat: Muse answers in a few seconds (Claude through the Anthropic API, `chat_model`), with the same tools as its voice. A typed "dance for me" makes the Muse on your desk dance; a bigger request starts a background job.
+- **One conversation.** What you say to the device and what you type are kept together (`chat.json`) and shown as one chat in the web app; the voice and the typed chat are each given the recent part of it.
+- Firmware: moves that arrive outside a spoken turn are performed by themselves.
+- The tools are carried out by one function for both (`run_tool()`), and `/feed.json` gives the web app everything in one request.
+
 ## 0.9.0 (2026-11-12)
 
 - **A web app** at `/results`, replacing the results page, laid out as a chat with Muse. Chat shows each request with what Muse said and a card that opens the write-up, and takes new requests typed at the bottom; Ideas lists things to hand over and things to say out loud; Memory shows what Muse remembers and lets you add or forget notes; the top shows whether Muse is connected, its battery and timers. `companion/avatar.png`, if present, is Muse's picture. The layout follows OpenMuse, and the colours, radii and type sizes the Meta Horizon OS UI Set; it is light only.

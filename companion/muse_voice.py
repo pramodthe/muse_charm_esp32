@@ -72,6 +72,7 @@ DEFAULTS = {
     "timezone": "",           # an IANA name such as Australia/Sydney; empty: the server's own
     "speak_first": True,      # timers, a low battery and "good morning" are said aloud
     "worker_model": "anthropic:claude-sonnet-5-5",   # the model that does background jobs
+    "chat_model": "claude-haiku-5-5",                # the model that answers typed messages (muse_chat.py)
     "listen_model": "nova-3",
     "think_provider": "anthropic",
     "think_model": "claude-haiku-4-5",
@@ -344,6 +345,84 @@ def settings_message(opts, history):
     }
 
 
+def run_tool(name, args, hub, body, via):
+    """Carry out one of the AI's tools and return its result as JSON text.
+
+    `hub` is the server (timers, jobs, Claude Code's status). `body` is how this
+    conversation reaches Muse itself: do(moves), show(text, secs), set(chosen)
+    and status_report(). A spoken conversation queues those with the reply's
+    audio (Voice); a typed one sends them straight to Muse (muse_chat.py).
+    `via` ("voice" or "web") is only for the log."""
+    if name == "muse_do":
+        moves = args.get("moves")
+        moves = [moves] if isinstance(moves, str) else moves if isinstance(moves, list) else []
+        moves = [m for m in moves if m in MOVES][:6]
+        log("%s: muse_do" % via, moves)
+        if moves:
+            body.do(moves)
+        return json.dumps({"ok": True, "doing": moves} if moves else
+                          {"ok": False, "error": "no known moves; use: " + ", ".join(MOVES)})
+    if name == "muse_show":
+        text = ascii_text(str(args.get("text") or ""), 18)
+        try:
+            secs = max(2, min(30, int(args.get("seconds") or 6)))
+        except (TypeError, ValueError):
+            secs = 6
+        log("%s: muse_show %r for %d s" % (via, text, secs))
+        if text:
+            body.show(text, secs)
+        return json.dumps({"ok": bool(text), "showing": text})
+    if name == "muse_set":
+        chosen = {}
+        for key, low in (("brightness", 10), ("volume", 0)):
+            try:
+                if args.get(key) is not None:
+                    chosen[key] = max(low, min(100, int(args[key])))
+            except (TypeError, ValueError):
+                pass
+        log("%s: muse_set" % via, chosen)
+        if chosen:
+            body.set(chosen)
+        return json.dumps({"ok": bool(chosen), **chosen})
+    if name == "muse_status":
+        content = json.dumps(body.status_report())
+        log("%s: muse_status ->" % via, content)
+        return content
+    if name == "time_now":
+        return json.dumps(muse_world.time_report(options()["timezone"]))
+    if name == "timer":
+        action = args.get("action")
+        if action == "set":
+            result = hub.timers.set(args.get("minutes"), args.get("label"))
+        elif action == "cancel":
+            result = hub.timers.cancel(args.get("label"))
+        else:
+            result = hub.timers.list()
+        log("%s: timer" % via, action, "->", result)
+        return json.dumps(result)
+    if name == "remember":
+        result = muse_world.remember(args.get("note") or "")
+        log("%s: remember ->" % via, result)
+        return json.dumps(result)
+    if name == "forget":
+        result = muse_world.forget(args.get("about") or "")
+        log("%s: forget ->" % via, result)
+        return json.dumps(result)
+    if name == "work_on":
+        result = hub.start_job(args.get("task"), args.get("title"))
+        log("%s: work_on ->" % via, result)
+        return json.dumps(result)
+    if name == "work_status":
+        content = json.dumps(hub.jobs.for_ai())
+        log("%s: work_status ->" % via, content[:200])
+        return content
+    if name == "claude_status":
+        content = hub.claude_summary()
+        log("%s: claude_status ->" % via, content)
+        return content
+    return json.dumps({"error": "unknown function"})
+
+
 class Voice:
     """The voice conversation of one connected Muse."""
 
@@ -364,6 +443,7 @@ class Voice:
         self.note = ""                      # the note handed to the AI for an announcement
         self.refused = False                # Deepgram would not take the announcement just now
         self.fed = False                    # this Deepgram connection has had microphone audio
+        self.line_log = True                # the announcement's words go into the shared conversation
         self.pitch = Pitch(DEFAULTS["pitch"])
         self.history = []
         self.captioned = ""                 # an announcement captioned before Deepgram sent its text
@@ -432,12 +512,13 @@ class Voice:
             self.close()
 
     # ------------------------------------------------------------ speaking first
-    def announce(self, text="", note="", moves=(), sign="", secs=12, alert=""):
+    def announce(self, text="", note="", moves=(), sign="", secs=12, alert="", log=True):
         """Say something without being asked: `text` word for word, or what the
         AI makes of `note` (a note to itself, for a greeting). `moves` and
         `sign` go with it. If Muse cannot speak just now it shows `alert`
         with chirps and a wave instead."""
         self.tasks = [t for t in self.tasks if not t.done()]
+        self.line_log = log   # whether the words go into the shared conversation
         self.tasks.append(asyncio.ensure_future(self._announce(text, note, list(moves), sign, secs, alert)))
 
     async def _announce(self, text, note, moves, sign, secs, alert):
@@ -515,7 +596,8 @@ class Voice:
         self.pitch = Pitch(opts["pitch"])
         log("voice: connected to Deepgram (%s at pitch %.2f, %s/%s)" % (
             opts["voice"], self.pitch.factor, opts["think_provider"], opts["think_model"]))
-        self._send_json(settings_message(opts, self.history))
+        # What was said before, out loud or typed in the web app (muse_chat.Conversation).
+        self._send_json(settings_message(opts, self.link.hub.talk.history(HISTORY)))
         self.tasks.append(asyncio.ensure_future(self._read_loop()))
         self.tasks.append(asyncio.ensure_future(self._housekeeping()))
         self.connecting = None
@@ -586,6 +668,8 @@ class Voice:
             self.cue = []
             if self.line:                   # its words, unless Deepgram sent them as text already
                 self._caption(self.line)
+                if self.line_log:
+                    self.link.hub.talk.say("muse", "voice", self.line)
                 self.history = (self.history + [("assistant", self.line[:400])])[-HISTORY:]
                 self.line, self.captioned = "", self.line
 
@@ -628,6 +712,8 @@ class Voice:
             note = role == "user" and content == self.note
             log("voice: %s: %s" % ("note" if note else "you" if role == "user" else "muse", content))
             self.history = (self.history + [(role, content[:400])])[-HISTORY:]
+            if not note:
+                self.link.hub.talk.say("you" if role == "user" else "muse", "voice", content)
             if note:
                 self.note = ""              # not something you said: nothing to show
             elif role == "user":
@@ -667,73 +753,19 @@ class Voice:
             args = json.loads(f.get("arguments") or "{}")
         except ValueError:
             args = {}
-        if not isinstance(args, dict):
-            args = {}
-        if name == "muse_do":
-            moves = args.get("moves")
-            moves = [moves] if isinstance(moves, str) else moves if isinstance(moves, list) else []
-            moves = [m for m in moves if m in MOVES][:6]
-            log("voice: muse_do", moves)
-            if moves:
-                # In order with the reply's audio, so a move lands where it was asked for.
-                self.link.queue_voice("json", {"type": "voice", "do": moves})
-            content = json.dumps({"ok": True, "doing": moves} if moves else
-                                 {"ok": False, "error": "no known moves; use: " + ", ".join(MOVES)})
-        elif name == "muse_show":
-            text = ascii_text(str(args.get("text") or ""), 18)
-            try:
-                secs = max(2, min(30, int(args.get("seconds") or 6)))
-            except (TypeError, ValueError):
-                secs = 6
-            log("voice: muse_show %r for %d s" % (text, secs))
-            if text:
-                self.link.queue_voice("json", {"type": "voice", "show": text, "secs": secs})
-            content = json.dumps({"ok": bool(text), "showing": text})
-        elif name == "muse_set":
-            chosen = {}
-            for key, low in (("brightness", 10), ("volume", 0)):
-                try:
-                    if args.get(key) is not None:
-                        chosen[key] = max(low, min(100, int(args[key])))
-                except (TypeError, ValueError):
-                    pass
-            log("voice: muse_set", chosen)
-            if chosen:
-                self.link.send_json({"type": "voice", "set": chosen})
-            content = json.dumps({"ok": bool(chosen), **chosen})
-        elif name == "muse_status":
-            content = json.dumps(self.link.status_report())
-            log("voice: muse_status ->", content)
-        elif name == "time_now":
-            content = json.dumps(muse_world.time_report(options()["timezone"]))
-        elif name == "timer":
-            timers, action = self.link.hub.timers, args.get("action")
-            if action == "set":
-                result = timers.set(args.get("minutes"), args.get("label"))
-            elif action == "cancel":
-                result = timers.cancel(args.get("label"))
-            else:
-                result = timers.list()
-            log("voice: timer", action, "->", result)
-            content = json.dumps(result)
-        elif name == "remember":
-            result = muse_world.remember(args.get("note") or "")
-            log("voice: remember ->", result)
-            content = json.dumps(result)
-        elif name == "forget":
-            result = muse_world.forget(args.get("about") or "")
-            log("voice: forget ->", result)
-            content = json.dumps(result)
-        elif name == "work_on":
-            result = self.link.hub.start_job(args.get("task"), args.get("title"))
-            log("voice: work_on ->", result)
-            content = json.dumps(result)
-        elif name == "work_status":
-            content = json.dumps(self.link.hub.jobs.for_ai())
-            log("voice: work_status ->", content[:200])
-        elif name == "claude_status":
-            content = self.claude_status()
-            log("voice: claude_status ->", content)
-        else:
-            content = json.dumps({"error": "unknown function"})
+        content = run_tool(name, args if isinstance(args, dict) else {}, self.link.hub, self, "voice")
         self._send_json({"type": "FunctionCallResponse", "id": f.get("id"), "name": name, "content": content})
+
+    # What the tools do to Muse in a spoken conversation (see run_tool).
+    def do(self, moves):
+        # In order with the reply's audio, so a move lands where it was asked for.
+        self.link.queue_voice("json", {"type": "voice", "do": moves})
+
+    def show(self, text, secs):
+        self.link.queue_voice("json", {"type": "voice", "show": text, "secs": secs})
+
+    def set(self, chosen):
+        self.link.send_json({"type": "voice", "set": chosen})
+
+    def status_report(self):
+        return self.link.status_report()

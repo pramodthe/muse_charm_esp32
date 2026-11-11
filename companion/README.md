@@ -29,7 +29,8 @@ Claude Code ──hooks (curl)──> muse_companion.py <──websocket──> 
 | `muse_world.py` | The AI's time, timers, memory and its view of Muse's sensors |
 | `muse_jobs.py` | Background jobs: starts `muse_worker.py`, keeps the results, tells Muse when one is done |
 | `muse_worker.py` | One job, in its own process: a Deep Agent that searches the web and writes up what it finds |
-| `muse_results.py` | The web app at `/results`: write-ups, new requests, memory, Muse's status |
+| `muse_results.py` | The web app at `/results`: the chat, ideas, memory, Muse's status |
+| `muse_chat.py` | The conversation shared by voice and web app, and the answers to typed messages (Anthropic API) |
 | `muse_ws.py` | A small websocket implementation (server and client) |
 | `muse_env.py` | Reads your keys from the repository's `.env` file |
 | `install_hooks.py` | Adds or removes the Claude Code hooks |
@@ -157,9 +158,16 @@ has Muse announce the summary (see [Speaking first](#speaking-first)).
 The write-ups are read in the web app at `/results` on the server (`muse_companion.py results`
 opens it), laid out as a chat. `GET /avatar.png` serves `companion/avatar.png`, if you have put
 a picture there, as Muse's picture in it. The page itself holds no data. It fetches `/results.json` and `/results/<id>.json`
-for the jobs and `/app.json` for Muse's state, timers and memory, and posts `{"task": ...}` to
-`/ask` (which calls `Hub.start_job()`, the same as the `work_on` tool) and `{"add": ...}` or
-`{"forget": ...}` to `/memory`. All of these need the token online; on your own computer the
+for the jobs when it is not signed in, and otherwise `/feed.json`: the conversation, the jobs
+and Muse's state, timers and memory in one answer. It posts `{"text": ...}` to `/chat` for a
+typed message, `{"task": ...}` to `/ask` to start a job directly (which calls `Hub.start_job()`,
+the same as the `work_on` tool) and `{"add": ...}` or `{"forget": ...}` to `/memory`.
+
+`muse_chat.Conversation` keeps what was said in `chat.json`, from both sides: the voice adds each
+spoken turn, and `muse_chat.reply()` adds each typed one. `reply()` asks Claude with the same
+tools as the voice (`run_tool()` in `muse_voice.py` carries them out for both). In a typed
+conversation a move, a sign or a setting goes straight to every connected Muse as a `voice`
+message, and Muse performs moves that arrive outside a spoken turn by themselves. All of these need the token online; on your own computer the
 page is open, and only that computer may post. Posts must carry `Content-Type: application/json`
 and an `X-Muse` header, which a form on another website cannot send. `MUSE_RESULTS_PUBLIC=true` in `.env` (then deploy again) drops that: anyone who has
 the server's address can then read your requests and write-ups (the two `/results` addresses

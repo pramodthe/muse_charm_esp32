@@ -15,6 +15,6 @@ FROM python:3.12-slim
 WORKDIR /app
 RUN pip install --no-cache-dir tzdata deepagents langchain-anthropic
 COPY muse_companion.py muse_voice.py muse_ws.py muse_online.py muse_world.py muse_env.py \
-     muse_jobs.py muse_worker.py muse_results.py ./
+     muse_jobs.py muse_worker.py muse_results.py muse_chat.py ./
 EXPOSE 8765
 CMD ["python3", "-u", "muse_companion.py"]

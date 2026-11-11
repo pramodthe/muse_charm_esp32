@@ -130,7 +130,7 @@ class Jobs:
         _write(job)
         self.running[job["id"]] = asyncio.ensure_future(self._run(job))
         log("job started: %s (%s)" % (title, job["id"]))
-        return {"ok": True, "started": title,
+        return {"ok": True, "started": title, "id": job["id"],
                 "note": "this runs in the background for a few minutes; the user is told when it is ready"}
 
     async def _run(self, job):

@@ -4,8 +4,10 @@
     GET  /results             the app (one page; it holds no data itself)
     GET  /results.json        the jobs, newest first, without their write-ups
     GET  /results/<id>.json   one job with its write-up
+    GET  /feed.json           the conversation, the jobs and Muse's state in one
     GET  /app.json            Muse's state, timers and memory
-    POST /ask                 {"task": "..."} starts a background job
+    POST /chat                {"text": "..."} a typed message; Muse answers (muse_chat.py)
+    POST /ask                 {"task": "..."} starts a background job directly
     POST /memory              {"add": "..."} or {"forget": "..."}
     GET  /avatar.png          your own picture for Muse, if companion/avatar.png exists
 
@@ -226,7 +228,7 @@ PAGE = r"""<!doctype html>
   <main id="view"></main>
   <div class="compose" id="compose" hidden>
     <form class="box" id="askform">
-      <textarea id="task" rows="1" aria-label="Message Muse" placeholder="Ask Muse to look into something"></textarea>
+      <textarea id="task" rows="1" aria-label="Message Muse" placeholder="Message Muse"></textarea>
       <button class="send" id="askbtn" aria-label="Send"><svg><use href="#i-send"/></svg></button>
     </form>
     <p class="hint" id="asknote" aria-live="polite"></p>
@@ -267,7 +269,8 @@ try {
 
 const $ = id => document.getElementById(id);
 const view = $("view"), compose = $("compose"), task = $("task"), shade = $("shade"), sheet = $("sheet");
-let jobs = [], app = null, canRead = true, drawn = "", lastCount = -1, notice = "", reading = "";
+let jobs = [], messages = [], app = null, canRead = true, drawn = "", lastCount = -1, notice = "", reading = "";
+let pending = "";   // a typed message Muse is still answering
 
 // Your own picture for Muse, if the server has one (companion/avatar.png).
 const picture = new Image();
@@ -354,10 +357,11 @@ function signIn(why) {
     <button class="solid">Sign in</button></form><p class="status bad" id="signnote" aria-live="polite"></p></div>`;
 }
 
-function jobHtml(j) {
+// What Muse shows for a background job: working, the answer with its write-up, or that it failed.
+function jobReply(j, onIt) {
   let reply;
   if (j.status === "running") {
-    reply = `<div class="bubble">On it. I'll say when it's ready.</div>
+    reply = `${onIt ? `<div class="bubble">On it. I'll say when it's ready.</div>` : ""}
       <p class="doing">${icon("i-search")}Searching the web and reading</p>
       <div class="bubble dots" role="status" aria-label="Muse is working"><i></i><i></i><i></i></div>`;
   } else if (j.status === "done") {
@@ -369,23 +373,40 @@ function jobHtml(j) {
     reply = `<div class="bubble bad">I couldn't finish this one. ${esc(sentence(j.error))}</div>
       <button class="chip" data-again="${esc(j.id)}">${icon("i-again")}Ask again</button>`;
   }
-  return `<div class="msg me"><div class="bubble">${esc(j.task || j.title)}</div><span class="time">${timeOf(j.created)}</span></div>
-    <div class="msg muse">${reply}</div>`;
+  return `<div class="msg muse">${reply}</div>`;
+}
+
+const mine = (text, t, aloud) => `<div class="msg me"><div class="bubble">${esc(text)}</div>
+  <span class="time">${timeOf(t)}${aloud ? ", out loud" : ""}</span></div>`;
+
+// Signed in: the whole conversation, spoken and typed, with each job where it was started.
+// Otherwise (results made public): the jobs alone.
+function entries() {
+  if (!app) return jobs.map(j => [{t: j.created, who: "you", text: j.task || j.title}, {t: j.created + 0.001, job: j.id, onIt: true}]).flat();
+  const shown = new Set(messages.filter(e => e.job).map(e => e.job));
+  const older = jobs.filter(j => !shown.has(j.id)).map(j => [{t: j.created, who: "you", text: j.task || j.title}, {t: j.created + 0.001, job: j.id, onIt: true}]).flat();
+  return messages.concat(older);
 }
 
 function drawActivity() {
   if (!canRead) return signIn("Your conversation with Muse is private on this server.");
-  if (!jobs.length) {
-    return `<div class="welcome"><h1>Hand Muse something bigger</h1>
-      <p>Ask out loud or type it here. Muse looks into it for a few minutes, tells you when it's ready, and leaves the write-up in this chat.</p>
+  const list = entries().sort((a, b) => a.t - b.t);
+  if (!list.length && !pending) {
+    return `<div class="welcome"><h1>Say hello to Muse</h1>
+      <p>Type here or talk to the Muse on your desk: it is one conversation. Ask for something bigger and Muse looks into it for a few minutes, then leaves the write-up in this chat.</p>
       <div class="starters">${IDEAS.slice(0, 3).map(t => `<button data-idea="${esc(t)}">${esc(t)}</button>`).join("")}</div></div>`;
   }
+  const byId = Object.fromEntries(jobs.map(j => [j.id, j]));
   let html = "", day = "";
-  for (const j of jobs.slice().reverse()) {
-    const d = dayOf(j.created);
+  for (const e of list) {
+    const d = dayOf(e.t);
     if (d !== day) { html += `<p class="day">${d}</p>`; day = d; }
-    html += jobHtml(j);
+    if (e.job) html += byId[e.job] ? jobReply(byId[e.job], e.onIt) : "";
+    else if (e.who === "you") html += mine(e.text, e.t, e.via === "voice");
+    else html += `<div class="msg muse"><div class="bubble">${esc(e.text)}</div></div>`;
   }
+  if (pending) html += mine(pending, Date.now() / 1000) +
+    `<div class="msg muse"><div class="bubble dots" role="status" aria-label="Muse is typing"><i></i><i></i><i></i></div></div>`;
   return html;
 }
 
@@ -450,42 +471,64 @@ async function draw() {
   let html, key;
   if (tab === "ideas") { key = "ideas"; html = drawIdeas(); }
   else if (tab === "memory") { key = "memory" + JSON.stringify(app && app.memory) + notice; html = drawMemory(); }
-  else { key = "activity" + canRead + JSON.stringify(jobs.map(j => [j.id, j.status])); html = drawActivity(); }
+  else {
+    const last = messages[messages.length - 1] || {};
+    key = "activity" + canRead + Boolean(app) + pending + messages.length + (last.text || "").length +
+          JSON.stringify(jobs.map(j => [j.id, j.status]));
+    html = drawActivity();
+  }
   const asking = tab === "activity" && canRead;
   compose.hidden = !asking;
   if (asking) {
-    const why = app ? app.cannot_work : "";
-    $("askbtn").disabled = !app || Boolean(why);
+    $("askbtn").disabled = !app || Boolean(pending);
     task.disabled = !app;
-    $("asknote").innerHTML = !app ? `<button class="link" data-go="memory">Sign in</button> to ask from here. You can always ask Muse out loud.` : esc(sentence(why));
+    if (!app) $("asknote").innerHTML = `<button class="link" data-go="memory">Sign in</button> to write to Muse. You can always talk to it out loud.`;
+    else if ($("asknote").querySelector("button")) $("asknote").textContent = "";
   }
   if (key === drawn) return;
   const fresh = !drawn.startsWith(tab);
   drawn = key;
   view.innerHTML = html;
-  if (tab === "activity" && (fresh || jobs.length !== lastCount)) window.scrollTo(0, document.documentElement.scrollHeight);
+  const count = jobs.length + messages.length + (pending ? 1 : 0);
+  if (tab === "activity" && (fresh || count !== lastCount)) window.scrollTo(0, document.documentElement.scrollHeight);
   else if (fresh) window.scrollTo(0, 0);
-  lastCount = jobs.length;
+  lastCount = count;
 }
 
 async function refresh() {
-  try { jobs = (await call("/results.json")).jobs || []; canRead = true; }
-  catch (e) { if (e.message === "signin") { canRead = false; jobs = []; } }
-  try { app = await call("/app.json"); }
-  catch (e) { if (e.message === "signin") app = null; }
+  try {
+    const feed = await call("/feed.json");            // signed in: everything in one answer
+    app = feed.app; jobs = feed.jobs || []; messages = feed.messages || []; canRead = true;
+  } catch (e) {
+    if (e.message !== "signin") return draw();        // a network hiccup: keep what is shown
+    app = null; messages = [];
+    try { jobs = (await call("/results.json")).jobs || []; canRead = true; }   // results made public
+    catch (err) { if (err.message === "signin") { canRead = false; jobs = []; } }
+  }
   await draw();
 }
 
+// Send a typed message. Muse answers in a few seconds, and hands bigger things to a background job.
 async function ask(text) {
   text = text.trim();
-  if (!text || !app) return;
-  $("askbtn").disabled = true;
+  if (!text || !app || pending) return;
+  pending = text; task.value = ""; grow(); $("asknote").textContent = "";
+  go("activity"); await draw();
+  let problem = "";
   try {
-    const r = await call("/ask", {task: text});
-    if (r.ok) { task.value = ""; grow(); go("activity"); }
-    else $("asknote").textContent = sentence(r.error || "Muse could not start that");
-  } catch (e) { $("asknote").textContent = e.message === "signin" ? "Sign in to ask from here." : e.message; }
+    const r = await call("/chat", {text});
+    if (!r.ok) problem = sentence(r.error || "Muse could not answer that");
+  } catch (e) { problem = e.message === "signin" ? "Sign in to write to Muse." : e.message; }
+  pending = "";
   await refresh();
+  if (problem) { $("asknote").textContent = problem; if (!task.value) { task.value = text; grow(); } }
+}
+
+// Start a background job again, as it was.
+async function again(text) {
+  const r = await call("/ask", {task: text}).catch(e => ({error: e.message}));
+  await refresh();
+  if (!r.ok) $("asknote").textContent = sentence(r.error || "Muse could not start that");
 }
 
 function grow() { task.style.height = "auto"; task.style.height = Math.min(task.scrollHeight, 140) + "px"; }
@@ -497,7 +540,7 @@ document.addEventListener("click", async e => {
   if (b.dataset.go) go(b.dataset.go);
   else if (b.dataset.read) go("read/" + b.dataset.read);
   else if (b.dataset.idea) { go("activity"); task.value = b.dataset.idea; setTimeout(() => { grow(); task.focus(); }, 0); }
-  else if (b.dataset.again) { const j = jobs.find(x => x.id === b.dataset.again); if (j) ask(j.task); }
+  else if (b.dataset.again) { const j = jobs.find(x => x.id === b.dataset.again); if (j) again(j.task); }
   else if (b.dataset.forget) {
     const text = b.dataset.forget;
     await call("/memory", {forget: text}).catch(() => {});

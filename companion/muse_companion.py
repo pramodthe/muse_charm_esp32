@@ -46,6 +46,7 @@ import time
 import urllib.parse
 import urllib.request
 
+import muse_chat
 import muse_jobs
 import muse_online
 import muse_results
@@ -153,6 +154,8 @@ class Hub:
         self.missed = []      # alerts that came up while no Muse was connected
         self.battery_told = 100   # the battery level Muse last warned about (100: not yet)
         self.jobs = muse_jobs.Jobs(self.on_job_done)   # background work (muse_worker.py)
+        self.talk = muse_chat.Conversation()           # what was said, out loud and in the web app
+        self.typing = asyncio.Lock()                   # one typed message is answered at a time
         self.retired_until = 0.0  # online: a new version is taking over; turn devices away until then
         # Online: let anyone who has the address read the results page without the token.
         self.results_public = os.environ.get("MUSE_RESULTS_PUBLIC", "").strip().lower() in ("1", "true", "yes", "on")
@@ -271,8 +274,11 @@ class Hub:
         """Hand a job to the background worker, with what Muse knows about you."""
         opts = muse_voice.options()
         t = muse_world.time_report(opts["timezone"])
-        return self.jobs.start(task, title, opts["worker_model"], about=muse_world.notes(),
-                               today="%s %s" % (t["weekday"], t["date"]))
+        result = self.jobs.start(task, title, opts["worker_model"], about=muse_world.notes(),
+                                 today="%s %s" % (t["weekday"], t["date"]))
+        if result.get("ok"):
+            self.talk.job(result.pop("id"))   # it shows in the conversation, where its write-up will be
+        return result
 
     def app_state(self):
         """For the web app: how Muse is, its timers, and what it remembers."""
@@ -293,7 +299,7 @@ class Hub:
         else:
             line, sign, moves = "Sorry, I couldn't finish looking into %s." % job["title"], "Oops", ["shake_head"]
         for link in list(self.devices.values()):
-            link.voice.announce(text=line, moves=moves, sign=sign, secs=15, alert=sign)
+            link.voice.announce(text=line, moves=moves, sign=sign, secs=15, alert=sign, log=False)
         if not self.devices:
             self.missed = (self.missed + [sign])[-3:]
 
@@ -563,7 +569,7 @@ async def handle(hub, reader, writer):
             await hub.serve_device(reader, writer, peer)
             return
 
-        if path in ("/app.json", "/ask", "/memory"):
+        if path in ("/app.json", "/feed.json", "/ask", "/chat", "/memory"):
             # The web app's private side: Muse's state, new requests, its memory.
             if not (authorized(hub, headers) if hub.token else (method == "GET" or is_loopback(peer))):
                 respond(writer, "401 Unauthorized")
@@ -571,9 +577,15 @@ async def handle(hub, reader, writer):
             if method == "GET" and path == "/app.json":
                 respond(writer, "200 OK", json.dumps(hub.app_state()).encode())
                 return
+            if method == "GET" and path == "/feed.json":
+                # The whole web app in one answer: the conversation, the jobs in it, and how Muse is.
+                feed = {"messages": hub.talk.recent(), "jobs": [hub.jobs.brief(j) for j in hub.jobs.list()],
+                        "app": hub.app_state()}
+                respond(writer, "200 OK", json.dumps(feed).encode())
+                return
             # Only the page itself may post: a form on another site cannot send these headers.
             n = int(headers.get("content-length") or 0)
-            if (method != "POST" or path == "/app.json" or n > 16384 or "x-muse" not in headers
+            if (method != "POST" or path.endswith(".json") or n > 16384 or "x-muse" not in headers
                     or not headers.get("content-type", "").startswith("application/json")):
                 respond(writer, "400 Bad Request")
                 return
@@ -584,7 +596,10 @@ async def handle(hub, reader, writer):
             except ValueError:
                 respond(writer, "400 Bad Request")
                 return
-            if path == "/ask":
+            if path == "/chat":
+                async with hub.typing:
+                    result = await muse_chat.reply(hub, body.get("text"))
+            elif path == "/ask":
                 result = hub.start_job(body.get("task"), body.get("title") or "")
                 log("asked from the web app ->", result)
             elif body.get("forget"):

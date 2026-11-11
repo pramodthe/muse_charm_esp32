@@ -275,13 +275,18 @@ with colours and sizes from the Meta Horizon OS UI Set:
 
 | | |
 | --- | --- |
-| Chat | Your requests on the right, Muse's answers on the left, and a card for each write-up that opens it to read. Type a new request at the bottom; it starts the same background job as asking out loud, and Muse announces the result |
+| Chat | One conversation with Muse, typed and spoken: what you type here and what you say to the device both appear, with Muse's answers and a card for each write-up. Type a message and Muse answers in a few seconds, with the same tools as its voice: "dance for me" makes the Muse on your desk dance, "set a timer for ten minutes" sets one, and a bigger request starts a background job |
 | Ideas | Things to hand over (a tap puts one in the message box) and things to say out loud |
 | Memory | What Muse remembers about you: add a note, or forget one |
 | At the top | Whether Muse is connected, its battery, and running timers |
 
 For your own picture of Muse at the top, save it as `companion/avatar.png` (and deploy again
 if the server is online).
+
+Typed messages are answered by Claude through the Anthropic API (`chat_model` in `voice.json`,
+Claude Haiku by default), with the key you added for background jobs. The voice and the typed
+chat are each given the recent conversation, so you can ask out loud and carry on in writing.
+It is all in [`companion/muse_chat.py`](companion/muse_chat.py).
 
 **Opening it, signed in.** Run this from the repository's folder (the path is wherever you
 cloned it):
@@ -393,6 +398,7 @@ To change the voice, the model or Muse's personality, create `~/.config/muse/voi
 | `timezone` | the server's own | An IANA name such as `Australia/Sydney`, for the time tool |
 | `speak_first` | `true` | `false`: Muse only speaks when spoken to (see [Muse speaks first](#muse-speaks-first)) |
 | `worker_model` | `anthropic:claude-sonnet-5-5` | The model for [background jobs](#background-jobs), as Deep Agents names it |
+| `chat_model` | `claude-haiku-5-5` | The model that answers messages typed in [the web app](#the-web-app) |
 
 To test voice chat without Muse, `python3 companion/test_voice.py "Hello Muse!"` plays Muse's part
 from your computer (macOS `say`, or `--wav file.wav`) and saves the spoken reply to `reply.wav`.
@@ -550,7 +556,8 @@ companion/             runs on your computer
   muse_world.py        the AI's time, timers, memory and view of Muse's sensors
   muse_jobs.py         background jobs: starts them, keeps their results
   muse_worker.py       one job: a Deep Agent that researches and writes up
-  muse_results.py      the web app: write-ups, new requests, memory, Muse's status
+  muse_results.py      the web app: the chat, ideas, memory, Muse's status
+  muse_chat.py         the shared conversation, and answers to typed messages
   muse_ws.py           small websocket implementation
   muse_env.py          reads your keys from .env
   install_hooks.py     adds or removes the Claude Code hooks

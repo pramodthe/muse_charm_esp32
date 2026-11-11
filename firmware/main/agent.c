@@ -14,6 +14,9 @@
 //                       {"type":"voice","say":"...","cps":17}  a sentence of the reply
 //                       reply audio (binary), paced a little ahead of playback
 //
+// A "do" list can also come by itself, when you type to Muse in the web app
+// ("dance for me"): behavior.c performs those moves without a spoken turn.
+//
 // Muse also speaks first (a timer is up, the battery is low, good morning):
 // the server sends "speaking" and audio without a turn, and Muse plays it the
 // same way (behavior.c comes close and moves its mouth).

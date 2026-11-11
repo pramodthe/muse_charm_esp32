@@ -62,6 +62,7 @@ static const char *TAG = "behavior";
 #define LISTEN_REPLY_MIN_MS 1500
 #define TALK_HOLD_MAX_MS 30000
 #define CHAT_MAX_MS 120000
+#define MOVE_ALONE_AFTER_MS 1500  // a move with no speech following is performed by itself
 #define NUDGE_EVERY_MS 45000
 #define NUDGE_TIMES 3
 #define LEAN_IN 0.05f            // how much closer Muse leans while you speak
@@ -185,7 +186,8 @@ static bool speaking_up(void)
 static bool busy(void)
 {
     return g_muse.touch_down || g_muse.button_down || g_muse.shake || g_muse.setup_request ||
-           uxQueueMessagesWaiting(s_events) > 0 || companion_event_waiting() || speaking_up();
+           uxQueueMessagesWaiting(s_events) > 0 || companion_event_waiting() || speaking_up() ||
+           agent_move_waiting();
 }
 
 // One frame of the breathing loop.
@@ -958,7 +960,7 @@ static void behavior_task(void *arg)
     int lean = lean_mid;
     bool leaning = false;
     int last_mood = MUSE_MOOD_OFF, nudges = 0;
-    int64_t next_nudge_ms = 0;
+    int64_t next_nudge_ms = 0, move_since_ms = 0;
     for (;;) {
         if (g_muse.setup_request) {
             g_muse.setup_request = false;
@@ -1002,6 +1004,29 @@ static void behavior_task(void *arg)
         }
         if (speaking_up()) {
             react_talk(&wake, false);  // Muse has something to say
+            settle();
+            active();
+            continue;
+        }
+        // Moves asked for outside a spoken conversation (typed in the web app):
+        // perform them here. A move that comes just ahead of something Muse is
+        // about to say waits a moment, so it is done as part of saying it.
+        if (!agent_move_waiting()) {
+            move_since_ms = 0;
+        } else if (!move_since_ms) {
+            move_since_ms = muse_now_ms();
+        } else if (muse_now_ms() - move_since_ms > MOVE_ALONE_AFTER_MS) {
+            ESP_LOGI(TAG, "moving on request");
+            move_since_ms = 0;
+            s_talk_shot = MUSE_SHOT_WIDE;
+            s_emote_until_ms = 0;
+            bool whole_body = true;
+            while (agent_move_waiting() && !g_muse.shake && !speaking_up()) {
+                whole_body = perform(agent_next_move(), &wake);
+            }
+            if (!whole_body) {
+                breathe_for(2200, NULL, &wake);  // a look or a step closer: hold it a moment
+            }
             settle();
             active();
             continue;
