@@ -314,8 +314,10 @@ static bool ws_send(bool text, const void *data, size_t len)
     xSemaphoreTake(s_ws_lock, portMAX_DELAY);
     int n = -1;
     if (s_ws && s_connected) {
-        n = text ? esp_websocket_client_send_text(s_ws, data, len, pdMS_TO_TICKS(500))
-                 : esp_websocket_client_send_bin(s_ws, data, len, pdMS_TO_TICKS(500));
+        // A send that times out makes the client drop the connection, so allow
+        // for a slow WiFi moment rather than giving up after a fraction of a second.
+        n = text ? esp_websocket_client_send_text(s_ws, data, len, pdMS_TO_TICKS(5000))
+                 : esp_websocket_client_send_bin(s_ws, data, len, pdMS_TO_TICKS(5000));
     }
     xSemaphoreGive(s_ws_lock);
     return n >= 0;

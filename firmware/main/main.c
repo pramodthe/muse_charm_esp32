@@ -6,6 +6,7 @@
 // at per-frame anchors exported from Blender. See README.md for the full tour.
 //
 //   clips.c     frame table, JPEG decoding, canvas
+//   panel.c     sets the AMOLED panel up again if it turns off
 //   face.c      live eyes and mouth
 //   behavior.c  which clip plays, and why
 //   touch.c     drag, tap, belly tap, long press, swipe
@@ -30,6 +31,7 @@
 #include "face.h"
 #include "motion.h"
 #include "muse.h"
+#include "panel.h"
 #include "settings.h"
 #include "touch.h"
 #include "wifi.h"
@@ -98,6 +100,7 @@ void app_main(void)
         face_create(screen);
         bsp_display_unlock();
     }
+    panel_guard_start();
 
 #if defined(CONFIG_MUSE_AGENT_ENABLE) || defined(CONFIG_MUSE_COMPANION_ENABLE)
     wifi_start();

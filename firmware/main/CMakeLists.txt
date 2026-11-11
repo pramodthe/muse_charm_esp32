@@ -14,6 +14,7 @@ idf_component_register(
         "settings.c"
         "setup_ui.c"
         "companion.c"
+        "panel.c"
     INCLUDE_DIRS "."
 )
 

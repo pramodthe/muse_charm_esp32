@@ -15,6 +15,7 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "muse.h"
+#include "panel.h"
 #include "setup_ui.h"
 
 #define BOOT_BUTTON GPIO_NUM_0
@@ -118,6 +119,7 @@ static void poll_button(lv_timer_t *t)
     const int64_t now = muse_now_ms();
     if (down && !was_down) {
         ESP_LOGI("touch", "BOOT pressed");
+        panel_wake();  // in case the screen went black
         pressed_ms = now;
         setup_fired = false;
         g_muse.button_down = true;
