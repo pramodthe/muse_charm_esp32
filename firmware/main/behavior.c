@@ -806,6 +806,18 @@ static void react_claude(const companion_event_t *e, TickType_t *wake)
         head_shake(COMPANION_SOUNDS, wake);
         linger_ms = 6000;
         break;
+    case COMPANION_ALERT:
+        // A timer is up: its label on a sign, two chirps and a wave.
+        face_set_caption("");
+        face_show_sign(e->caption[0] ? e->caption : "Time's up!", 15000);
+        camera_shot(MUSE_SHOT_MEDIUM, 300);
+        audio_play(MUSE_SOUND_CHEER);
+        audio_play(MUSE_SOUND_HELLO);
+        g_muse.expr_override = MUSE_EXPR_HAPPY;
+        play_all(s_wave, wake);
+        audio_play(MUSE_SOUND_CHEER);
+        linger_ms = 0;
+        break;
     case COMPANION_COMPACT:
         chirp(MUSE_SOUND_SQUEEZE);
         if (play_all(s_squeeze, wake)) {

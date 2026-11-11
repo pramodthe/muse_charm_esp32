@@ -8,6 +8,7 @@
 //   clips.c     frame table, JPEG decoding, canvas
 //   camera.c    which part of the frame is on screen (zoom.c enlarges it)
 //   panel.c     sets the AMOLED panel up again if it turns off
+//   power.c     battery level and charging, from the AXP2101
 //   face.c      live eyes and mouth
 //   behavior.c  which clip plays, and why
 //   touch.c     drag, tap, belly tap, long press, swipe
@@ -33,6 +34,7 @@
 #include "motion.h"
 #include "muse.h"
 #include "panel.h"
+#include "power.h"
 #include "settings.h"
 #include "touch.h"
 #include "wifi.h"
@@ -101,6 +103,7 @@ void app_main(void)
         bsp_display_unlock();
     }
     panel_guard_start();
+    power_init();
 
 #if defined(CONFIG_MUSE_AGENT_ENABLE) || defined(CONFIG_MUSE_COMPANION_ENABLE)
     wifi_start();

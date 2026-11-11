@@ -23,6 +23,7 @@
 #include <string.h>
 
 #include "agent.h"
+#include "audio.h"
 #include "cJSON.h"
 #include "esp_crt_bundle.h"
 #include "esp_log.h"
@@ -32,8 +33,11 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "lwip/sockets.h"
+#include "esp_wifi.h"
 #include "muse.h"
 #include "nvs.h"
+#include "panel.h"
+#include "power.h"
 #include "wifi.h"
 
 static const char *TAG = "companion";
@@ -48,6 +52,7 @@ static const char *TAG = "companion";
 #define LOST_AFTER_MS 8000  // offline this long: look for the server again
 #define LOST_AFTER_ONLINE_MS 20000  // the TLS handshake over the internet takes a few seconds
 #define RX_MAX 1024
+#define STATUS_EVERY_MS 60000
 
 static esp_websocket_client_handle_t s_ws;
 static volatile bool s_connected, s_hello_due;
@@ -64,6 +69,8 @@ static char s_online_url[URL_MAX];         // "" if Muse knows of none
 static char s_online_token[TOKEN_MAX];
 static char s_new_url[URL_MAX], s_new_token[TOKEN_MAX];  // from a "server" message, to be saved
 static volatile bool s_pair_due;
+static volatile bool s_status_due;
+static int64_t s_status_sent_ms;
 static char s_rx[RX_MAX + 1];  // one message, reassembled if it came in pieces
 
 // ---------------------------------------------------------------- messages
@@ -114,6 +121,8 @@ static void handle_message(const char *text, int len)
         snprintf(caption, sizeof(caption), "Linked to %.30s", name && name[0] ? name : "your computer");
         ESP_LOGI(TAG, "%s", caption);
         post_event(COMPANION_LINKED, caption);
+    } else if (type && strcmp(type, "alert") == 0) {
+        post_event(COMPANION_ALERT, cJSON_GetStringValue(cJSON_GetObjectItem(root, "text")));
     } else if (type && strcmp(type, "server") == 0) {
         // Remember (or forget) the online server; the companion task saves it.
         const char *url = cJSON_GetStringValue(cJSON_GetObjectItem(root, "url"));
@@ -168,6 +177,7 @@ static void on_ws_event(void *arg, esp_event_base_t base, int32_t id, void *data
         ESP_LOGI(TAG, "connected to %s", s_uri);
         s_connected = true;
         s_hello_due = true;
+        s_status_due = true;
         g_muse.claude_mood = MUSE_MOOD_IDLE;
         break;
     case WEBSOCKET_EVENT_DISCONNECTED:
@@ -197,6 +207,41 @@ static void on_ws_event(void *arg, esp_event_base_t base, int32_t id, void *data
         break;
     default:
         break;
+    }
+}
+
+// ---------------------------------------------------------------- how Muse is doing
+// {"type":"status","battery":87,"charging":true,"usb":true,"wifi":"Home","rssi":-58,
+//  "pose":"upright","noise":34,"brightness":80,"volume":65,"uptime":754}
+static void send_status(void)
+{
+    char msg[320];
+    int n = snprintf(msg, sizeof(msg), "{\"type\":\"status\"");
+    muse_power_t power;
+    if (power_read(&power)) {
+        if (power.battery) {
+            n += snprintf(msg + n, sizeof(msg) - n, ",\"battery\":%d,\"charging\":%s", power.percent,
+                          power.charging ? "true" : "false");
+        }
+        n += snprintf(msg + n, sizeof(msg) - n, ",\"usb\":%s", power.usb ? "true" : "false");
+    }
+    wifi_ap_record_t ap;
+    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+        char ssid[33];
+        int k = 0;
+        for (const uint8_t *c = ap.ssid; *c && k < 32; c++) {
+            ssid[k++] = (*c >= 32 && *c < 127 && *c != '"' && *c != '\\') ? (char)*c : '?';
+        }
+        ssid[k] = '\0';
+        n += snprintf(msg + n, sizeof(msg) - n, ",\"wifi\":\"%s\",\"rssi\":%d", ssid, ap.rssi);
+    }
+    const float tilt = g_muse.tilt_deg;
+    const char *pose = g_muse.flat ? "lying flat" : (tilt > 25 || tilt < -25) ? "tipped on its side" : "upright";
+    n += snprintf(msg + n, sizeof(msg) - n,
+                  ",\"pose\":\"%s\",\"noise\":%d,\"brightness\":%d,\"volume\":%d,\"uptime\":%d}", pose,
+                  g_muse.noise_db, panel_awake_brightness(), audio_volume(), (int)(muse_now_ms() / 1000));
+    if (n > 0 && n < (int)sizeof(msg)) {
+        companion_send_text(msg);
     }
 }
 
@@ -361,6 +406,11 @@ static void companion_task(void *arg)
                 s_hello_due = false;
                 companion_send_text("{\"type\":\"hello\",\"name\":\"Muse\",\"voice\":1}");
             }
+            if (s_connected && (s_status_due || muse_now_ms() - s_status_sent_ms > STATUS_EVERY_MS)) {
+                s_status_due = false;
+                s_status_sent_ms = muse_now_ms();
+                send_status();
+            }
             if (s_pair_due && s_connected) {
                 s_pair_due = false;
                 online_save();
@@ -400,6 +450,11 @@ void companion_start(void)
 bool companion_connected(void)
 {
     return s_connected;
+}
+
+void companion_report_status(void)
+{
+    s_status_due = true;
 }
 
 bool companion_next_event(companion_event_t *out)

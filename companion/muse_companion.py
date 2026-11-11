@@ -45,6 +45,7 @@ import urllib.request
 
 import muse_online
 import muse_voice
+import muse_world
 import muse_ws as ws
 
 PORT = 8765
@@ -55,6 +56,7 @@ THINKING_STALE_S = 5 * 60   # "thinking" with no news this long: Claude was inte
 OOPS_EVERY_S = 10           # at most one "that failed" reaction per session this often
 CAPTION_MAX = 28            # characters that fit under Muse on one line
 MAX_HOOK_BYTES = 32 * 1024 * 1024
+RETIRE_S = 120              # online: how long a retiring server turns Muse away
 
 # Moods last until the next event; events are one-off reactions.
 MOOD_PRIORITY = {"needs_you": 3, "working": 2, "thinking": 1, "idle": 0}
@@ -142,6 +144,9 @@ class Hub:
         self.pair = pair      # {"url", "token"} to hand to the Muse that connects, or None
         self.sessions = {}
         self.devices = {}     # writer -> DeviceLink
+        self.timers = muse_world.Timers(self.alert)
+        self.missed = []      # alerts that came up while no Muse was connected
+        self.retired_until = 0.0  # online: a new version is taking over; turn devices away until then
         self.sent = None      # last mood message, re-sent to new devices
 
     # ------------------------------------------------------------ hook events
@@ -243,6 +248,14 @@ class Hub:
         for link in list(self.devices.values()):
             link.send_json(msg)
 
+    def alert(self, text):
+        """A timer is up: Muse chirps, waves and shows the text."""
+        log("alert:", text)
+        if self.devices:
+            self.broadcast({"type": "alert", "text": short(text, 18)})
+        else:
+            self.missed = (self.missed + [text])[-3:]
+
     def claude_summary(self):
         """What Claude Code is up to, for Muse to talk about."""
         now = time.time()
@@ -267,6 +280,9 @@ class Hub:
         link.announce_voice()
         if self.sent:
             link.send_json(self.sent)
+        for text in self.missed:
+            link.send_json({"type": "alert", "text": short(text, 18)})
+        self.missed = []
         try:
             while True:
                 op, data = await ws.read_message(reader, writer, frame_timeout=60)  # Muse pings every 10 s
@@ -290,6 +306,8 @@ class Hub:
         return {
             "server": self.name,
             "devices": [link.peer for link in self.devices.values()],
+            "muse": [link.status_report() for link in self.devices.values() if link.status],
+            "timers": self.timers.list()["timers"],
             "voice": muse_voice.key_status()[1] or "ready",
             "showing": self.sent,
             "sessions": [
@@ -308,6 +326,7 @@ class DeviceLink:
         self.voice = muse_voice.Voice(self, hub.claude_summary)
         self.voice_queue = asyncio.Queue()   # reply audio and voice messages, in order
         self.voice_on = None
+        self.status, self.status_at = {}, 0.0   # what Muse last reported about itself
         self.sender = asyncio.ensure_future(self._send_voice())
 
     def send_json(self, msg):
@@ -334,6 +353,8 @@ class DeviceLink:
             self.voice.talk_end()
         elif t == "talk_stop":
             self.voice.talk_stop()
+        elif t == "status":
+            self.status, self.status_at = {k: v for k, v in msg.items() if k != "type"}, time.time()
         elif t == "hello":
             log("Muse says hello", {k: v for k, v in msg.items() if k != "type"})
         elif t == "paired":
@@ -341,6 +362,12 @@ class DeviceLink:
                 log("Muse saved the online server. Stop this server (Ctrl-C) and Muse will use it.")
             else:
                 log("Muse forgot the online server; it will only look for one on this network.")
+
+    def status_report(self):
+        # A connection that reports nothing about itself (test_voice.py) gets the
+        # newest report from a Muse that does.
+        link = self if self.status else max(self.hub.devices.values(), key=lambda d: d.status_at, default=self)
+        return muse_world.status_report(link.status, time.time() - link.status_at)
 
     # Reply audio is paced: at most LEAD_S ahead of playback, so Muse's buffer
     # never overflows and a "stop" takes effect quickly.
@@ -435,10 +462,32 @@ async def handle(hub, reader, writer):
                 hub.on_hook(ev)
             return
 
+        if method == "POST" and path == "/retire" and hub.token:
+            # A new version is about to be deployed. A host such as Modal keeps this
+            # one running for as long as Muse stays connected to it, so let Muse go
+            # and turn it away for a while; it keeps trying and lands on the new
+            # version. Only for a while, in case the new version never arrives.
+            if not authorized(hub, headers):
+                respond(writer, "403 Forbidden")
+                return
+            log("retiring: letting %d device(s) go" % len(hub.devices))
+            hub.retired_until = time.time() + RETIRE_S
+            for link in list(hub.devices.values()):
+                try:
+                    link.writer.write(ws.frame(ws.CLOSE, b"\x03\xe9"))  # 1001 going away
+                    link.writer.close()
+                except Exception:
+                    pass
+            respond(writer, "204 No Content")
+            return
+
         if path == "/device" and headers.get("upgrade", "").lower() == "websocket":
             if hub.token and not authorized(hub, headers):
                 log("refused a device without the token from", peer)
                 respond(writer, "401 Unauthorized")
+                return
+            if time.time() < hub.retired_until:
+                respond(writer, "503 Service Unavailable")
                 return
             key = headers.get("sec-websocket-key", "")
             writer.write(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"

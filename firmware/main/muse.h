@@ -97,10 +97,12 @@ typedef struct {
     volatile float downhill;       // -1..1, which side of the screen is lower (motion)
     volatile bool shake;           // set by motion, cleared by behaviour
     volatile bool moved;           // picked up or moved; set by motion, cleared by behaviour
+    volatile bool flat;            // lying on its back or its face (motion)
 
     volatile bool voice_active;    // (audio)
     volatile float mouth_level;    // 0..1, from the voice or Muse's own reply (audio)
     volatile float mic_level;      // 0..1, how loud you are while Muse listens (audio)
+    volatile int noise_db;         // how noisy the room is, roughly 25 (silent) to 75 (loud) (audio)
     volatile bool button_down;     // BOOT button (touch)
 
     volatile int agent_state;      // muse_agent_state_t (agent)

@@ -22,6 +22,7 @@ typedef enum {
     COMPANION_ERROR,    // the turn failed
     COMPANION_COMPACT,  // Claude is tidying up its memory
     COMPANION_BYE,      // the session ended
+    COMPANION_ALERT,    // a timer is up; the caption is its label
 } companion_event_kind_t;
 
 typedef struct {
@@ -41,6 +42,10 @@ bool companion_event_waiting(void);
 
 // The caption for the current mood (g_muse.claude_mood).
 void companion_mood_caption(char *buf, size_t len);
+
+// Tell the server how Muse is doing (battery, WiFi, position, noise ...) soon;
+// it also goes out once a minute. The AI reads it with its muse_status tool.
+void companion_report_status(void);
 
 // Send to the server (voice chat). Return false when not linked.
 bool companion_send_text(const char *text);

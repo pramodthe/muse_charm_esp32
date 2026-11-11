@@ -8,6 +8,8 @@ One small container runs muse_companion.py in online mode. Modal gives it an
 https address and passes websockets through; the Deepgram key and the token
 Muse must present come from the Modal secret "muse-companion". The container
 runs while Muse is connected and stops a few minutes after it disconnects.
+What Muse is asked to remember lives on the Modal volume "muse-companion-data".
+The time zone is taken from the computer that deploys this.
 """
 
 import os
@@ -18,14 +20,29 @@ import modal
 PORT = 8765
 HERE = os.path.dirname(os.path.abspath(__file__))
 
+
+
+def local_timezone():
+    """This computer's time zone as an IANA name ("" if it can't be told)."""
+    if os.environ.get("TZ"):
+        return os.environ["TZ"]
+    path = os.path.realpath("/etc/localtime")
+    return path.split("zoneinfo/", 1)[1] if "zoneinfo/" in path else ""
+
+
 app = modal.App("muse-companion")
-image = modal.Image.debian_slim(python_version="3.12").add_local_dir(
+image = modal.Image.debian_slim(python_version="3.12").pip_install("tzdata").add_local_dir(
     HERE, "/app", ignore=["__pycache__", "*.pyc", "*.wav"])
+data = modal.Volume.from_name("muse-companion-data", create_if_missing=True)
 
 
 @app.function(
     image=image,
-    secrets=[modal.Secret.from_name("muse-companion")],  # DEEPGRAM_API_KEY and MUSE_TOKEN
+    secrets=[
+        modal.Secret.from_name("muse-companion"),  # DEEPGRAM_API_KEY and MUSE_TOKEN
+        modal.Secret.from_dict({"MUSE_TZ": local_timezone(), "MUSE_DATA_DIR": "/data"}),
+    ],
+    volumes={"/data": data},
     max_containers=1,       # Muse and the Claude Code hooks must reach the same server
     timeout=24 * 60 * 60,   # the longest one connection can last; Muse reconnects by itself
     scaledown_window=300,

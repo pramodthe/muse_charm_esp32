@@ -46,8 +46,9 @@ when Claude needs your OK and cheers when the reply is done.
 | Nothing for 3 minutes | Dozes off: eyes closed, "z z Z", the screen dimmed. Touch it, pick it up or press BOOT to wake it |
 
 The AI has Muse's body and screen as tools, so you can just ask: "dance for me", "come closer",
-"show the word hello", "turn the volume down", "good night". Ask "what is Claude doing?" and it
-checks on your Claude Code sessions.
+"show the word hello", "turn the volume down", "good night". It can sense things too: "how's your
+battery?", "what time is it?", "set a timer for five minutes", "remember that I like tea". Ask
+"what is Claude doing?" and it checks on your Claude Code sessions.
 
 Without the companion server, Muse is still a full interactive mascot: pressing BOOT squeezes it
 (holding 3 s opens setup), and it looks up and moves its mouth when it hears a voice. The chirps
@@ -206,7 +207,17 @@ firmware performs them (`perform()` in `firmware/main/behavior.c`):
 | `muse_do` | Performs one or more moves, in order: `wave`, `giggle`, `cheer`, `dance`, `spin`, `shake_head`, `tilt_head`, `bounce`, `sway`, `smile`, `surprised`, `come_closer`, `step_back`, `sleep` | "Dance for me", "come closer", "good night" |
 | `muse_show` | Puts a short sign at the top of the screen for a few seconds | "Show the word hello" |
 | `muse_set` | Changes the screen brightness or speaker volume, until the next restart | "A bit quieter", "dim your screen" |
+| `muse_status` | Reads Muse's own sensors: battery and charging, WiFi, whether it is upright or lying down, how noisy the room is, brightness, volume, time since it started | "How's your battery?", "is it noisy here?" |
+| `time_now` | The time, weekday and date where you are | "What time is it?" |
+| `timer` | Sets, lists or cancels timers; when one is up Muse chirps, waves and shows its label | "Set a timer for five minutes for tea" |
+| `remember`, `forget` | Keeps short notes about you between conversations, and drops them again | "Remember my name is Sam", "forget everything" |
 | `claude_status` | Reads what your Claude Code sessions are doing | "What is Claude doing?" |
+
+Muse reports its sensors to the server at the start of each conversation and once a minute
+(`power.c` reads the board's AXP2101 for the battery). The server side of the other tools is in
+[`companion/muse_world.py`](companion/muse_world.py). Notes are kept in
+`~/.config/muse/memory.json` (online: on the host's storage), and timers live in the server, so
+they are lost if it restarts.
 
 Muse also uses the moves by itself to show feelings while it talks. To add a move, add it to
 `MOVES` in `muse_voice.py`, to `muse_move_t` in `muse.h` and the name table in `agent.c`, and
@@ -271,6 +282,7 @@ To change the voice, the model or Muse's personality, create `~/.config/muse/voi
 | `listen_model` | `nova-3` | Deepgram speech-to-text model |
 | `think_provider` / `think_model` | `anthropic` / `claude-haiku-4-5` | Any Deepgram think provider and model, for example `open_ai` / `gpt-4o-mini` |
 | `prompt` | a short, playful Muse | Muse's personality |
+| `timezone` | the server's own | An IANA name such as `Australia/Sydney`, for the time tool |
 
 To test voice chat without Muse, `python3 companion/test_voice.py "Hello Muse!"` plays Muse's part
 from your computer (macOS `say`, or `--wav file.wav`) and saves the spoken reply to `reply.wav`.
@@ -380,12 +392,14 @@ firmware/              ESP-IDF project
     wifi.c/.h          saved networks and reconnects
     setup_ui.c/.h      on-screen WiFi setup
     portal.c/.h        the Muse-setup page for phones
-    panel.c/.h         keeps the AMOLED panel's settings
+    panel.c/.h         keeps the AMOLED panel's settings, brightness
+    power.c/.h         battery level and charging (AXP2101)
     settings.c/.h      NVS start-up
     Kconfig.projbuild  menuconfig options
 companion/             runs on your computer
   muse_companion.py    the server: Claude Code hooks, moods, Muse's connection
   muse_voice.py        voice chat relay to the Deepgram Voice Agent API
+  muse_world.py        the AI's time, timers, memory and view of Muse's sensors
   muse_ws.py           small websocket implementation
   install_hooks.py     adds or removes the Claude Code hooks
   test_voice.py        tests voice chat without Muse

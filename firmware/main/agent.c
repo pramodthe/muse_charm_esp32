@@ -308,6 +308,7 @@ bool agent_begin_turn(void)
     s_end_due = false;
     s_turn_active = true;
     s_start_due = true;
+    companion_report_status();  // fresh, in case the AI asks how Muse is doing
     sentence_t old;
     while (s_sentences && xQueueReceive(s_sentences, &old, 0) == pdTRUE) {
     }

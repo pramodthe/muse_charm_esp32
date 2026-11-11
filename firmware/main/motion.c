@@ -135,6 +135,7 @@ static void motion_task(void *arg)
         // stock Gravitysphere app), so its share of gravity gives the roll.
         const float g = sqrtf(gx * gx + gy * gy + gz * gz);
         if (g > 7.0f && g < 12.5f) {
+            g_muse.flat = fabsf(gz) / g > 0.85f;
             const float r = muse_clampf(gy / g, -1.0f, 1.0f);
             g_muse.tilt_deg = LEAN_SIGN * asinf(r) * 180.0f / (float)M_PI;
             g_muse.downhill = muse_clampf(-r * 2.5f, -1.0f, 1.0f);

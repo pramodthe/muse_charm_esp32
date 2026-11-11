@@ -24,6 +24,7 @@ Claude Code ──hooks (curl)──> muse_companion.py <──websocket──> 
 | --- | --- |
 | `muse_companion.py` | The server: Claude Code hooks on `127.0.0.1:8765/hook`, Muse's websocket on `:8765/device`, the UDP beacon on port 47800, a status page on `:8765/` |
 | `muse_voice.py` | Voice chat: relays audio between Muse and Deepgram, raises the voice's pitch, sends subtitles and gestures |
+| `muse_world.py` | The AI's time, timers, memory and its view of Muse's sensors |
 | `muse_ws.py` | A small websocket implementation (server and client) |
 | `install_hooks.py` | Adds or removes the Claude Code hooks |
 | `test_voice.py` | Plays Muse's part from your computer, to test voice chat without Muse |
@@ -95,9 +96,14 @@ online mode (the `MUSE_TOKEN` environment variable is set):
 - No beacon. Muse learns the address and token from a local server run as
   `muse_companion.py pair`, and keeps them in its own storage.
 - The Deepgram key comes from `DEEPGRAM_API_KEY`, and voice options from `MUSE_VOICE` (the same
-  JSON as `voice.json`).
+  JSON as `voice.json`). `MUSE_TZ` sets the time zone and `MUSE_DATA_DIR` the folder for what
+  Muse remembers; `modal_app.py` sets both (your computer's time zone, and a Modal volume).
 - The hooks run `muse_hook.py`, which strips each event down to what Muse shows before anything
   leaves your computer, and sends it in the background.
+- After changing the server's code, `python3 companion/deploy_modal.py --code-only` deploys it
+  again. Modal keeps the old version running for as long as Muse stays connected to it, so the
+  script first asks the old one (`POST /retire`) to let Muse go and turn it away for two minutes;
+  Muse reconnects by itself and lands on the new version.
 
 ## Voice options
 
@@ -111,11 +117,19 @@ Create `~/.config/muse/voice.json` to change how Muse talks, for example
 | `listen_model` | `nova-3` | Deepgram speech-to-text model |
 | `think_provider` / `think_model` | `anthropic` / `claude-haiku-4-5` | Any Deepgram think provider and model |
 | `prompt` | a short, playful Muse | Muse's personality |
+| `timezone` | the server's own | An IANA name such as `Australia/Sydney`, for the time tool |
 
-The AI has four tools: `muse_do` (moves such as wave, dance, come_closer or sleep, one or several
-in order), `muse_show` (a short sign on the screen), `muse_set` (brightness and volume) and
-`claude_status` (what your Claude Code sessions are doing). They are declared in `TOOLS` and
-carried out in `_function()` in `muse_voice.py`; the firmware performs the moves.
+The AI's tools are declared in `TOOLS` and carried out in `_function()` in `muse_voice.py`:
+
+- `muse_do` (moves such as wave, dance, come_closer or sleep, one or several in order),
+  `muse_show` (a short sign on the screen) and `muse_set` (brightness and volume), which the
+  firmware performs.
+- `muse_status`: what Muse last reported about itself (battery, WiFi, position, room noise ...).
+  Muse sends a `status` message at the start of each conversation and once a minute.
+- `time_now`, `timer`, `remember` and `forget`, in `muse_world.py`. Notes are kept in
+  `memory.json` in `~/.config/muse` (or `MUSE_DATA_DIR`) and added to the prompt when a
+  conversation starts. A timer that is up sends Muse an `alert`.
+- `claude_status`: what your Claude Code sessions are doing.
 
 ## Claude Code events
 

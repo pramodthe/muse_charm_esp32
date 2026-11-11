@@ -15,3 +15,4 @@ void audio_play(muse_sound_t sound);
 
 // Change the speaker volume (percent) until the next restart. Safe from any task.
 void audio_set_volume(int percent);
+int audio_volume(void);

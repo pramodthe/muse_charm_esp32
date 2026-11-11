@@ -195,7 +195,7 @@ static void audio_task(void *arg)
     int16_t (*preroll)[CHUNK] = heap_caps_calloc(PREROLL_CHUNKS, sizeof(*preroll), MALLOC_CAP_SPIRAM);
     int preroll_next = 0;
     bool was_listening = false;
-    float noise = 0, env = 0, mic_env = 0;
+    float noise = 0, env = 0, mic_env = 0, room_db = 0;
     int voiced_run = 0, chunks = 0;
     int64_t last_voice = 0, mute_until = 0;
 #ifdef CONFIG_MUSE_DEBUG_LOG
@@ -212,6 +212,13 @@ static void audio_task(void *arg)
             continue;
         }
         const int64_t now = muse_now_ms();
+
+        // How noisy the room is (for the AI's muse_status), when Muse itself is quiet.
+        if (now >= mute_until) {
+            const float db = 20.0f * log10f(chunk_rms(mic, CHUNK) + 1.0f);
+            room_db = room_db <= 0 ? db : room_db + (db - room_db) * 0.02f;
+            g_muse.noise_db = (int)room_db;
+        }
 
         // Voice chat: while the screen is held, stream the microphone,
         // starting with the moments before the hold was recognised.
@@ -324,6 +331,11 @@ bool audio_start(void)
 void audio_set_volume(int percent)
 {
     s_volume = percent < 0 ? 0 : percent > 100 ? 100 : percent;
+}
+
+int audio_volume(void)
+{
+    return s_volume;
 }
 
 void audio_play(muse_sound_t sound)

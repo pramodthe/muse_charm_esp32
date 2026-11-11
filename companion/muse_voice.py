@@ -18,8 +18,10 @@ key stays on this computer.
              reply audio (binary, 16 kHz 16-bit mono)
 
 The AI has Muse's body and screen as tools (see TOOLS below): muse_do performs
-moves, muse_show puts up a sign, muse_set changes brightness and volume, and
-claude_status reports what Claude Code is doing.
+moves, muse_show puts up a sign, muse_set changes brightness and volume,
+muse_status reads Muse's own sensors, time_now, timer, remember and forget
+(muse_world.py) give it the time, timers and a memory, and claude_status
+reports what Claude Code is doing.
 
 Muse's voice is the Deepgram voice raised in pitch (and a little faster), so
 it sounds like the same small creature that chirps.
@@ -37,6 +39,7 @@ import os
 import sys
 import time
 
+import muse_world
 import muse_ws as ws
 
 DEEPGRAM_URL = os.environ.get("MUSE_DEEPGRAM_URL", "wss://agent.deepgram.com/v1/agent/converse")
@@ -57,6 +60,7 @@ SPEAKING_CPS = 14.5      # characters per second at normal pitch (for subtitles)
 DEFAULTS = {
     "voice": "aura-2-thalia-en",
     "pitch": 1.18,            # 1 = Deepgram's voice unchanged
+    "timezone": "",           # an IANA name such as Australia/Sydney; empty: the server's own
     "listen_model": "nova-3",
     "think_provider": "anthropic",
     "think_model": "claude-haiku-4-5",
@@ -72,6 +76,10 @@ DEFAULTS = {
         "tilt_head when curious, shake_head for no, surprised at a surprise. You can chain a few "
         "moves in one call. Use muse_show to put a few words on your screen as a sign, and muse_set "
         "when asked to change your brightness or volume. Say a short line along with any tool call. "
+        "You can sense things: call muse_status for your battery, WiFi, how you are sitting and how "
+        "noisy the room is, and time_now for the time or date; never guess those. Use timer when "
+        "asked to time or remind, and remember when the user tells you something about themselves "
+        "worth keeping, such as their name or what they like. "
         "Claude Code, an AI coding assistant, often works on the same computer; if the user asks what "
         "Claude is doing or how their work is going, call claude_status and answer in a sentence."
     ),
@@ -134,6 +142,44 @@ TOOLS = [
                 "volume": {"type": "integer", "description": "0 to 100"},
             },
         },
+    },
+    {
+        "name": "muse_status",
+        "description": "How Muse itself is doing right now, from its own sensors: battery level and whether "
+                       "it is charging, WiFi, whether it is upright or lying down, how noisy the room is, "
+                       "brightness, volume and how long it has been on.",
+        "parameters": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "time_now",
+        "description": "The current time, weekday and date where the user is.",
+        "parameters": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "timer",
+        "description": "Set, list or cancel timers and short reminders. When one is up, Muse chirps, waves "
+                       "and shows its label on the screen.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["set", "list", "cancel"]},
+                "minutes": {"type": "number", "description": "For set: how long from now; 0.5 is thirty seconds."},
+                "label": {"type": "string", "description": "A word or two shown when it is up, such as Tea. "
+                                                           "For cancel: which one (empty cancels all)."},
+            },
+            "required": ["action"],
+        },
+    },
+    {
+        "name": "remember",
+        "description": "Keep a short note about the user for future conversations: their name, likes, "
+                       "plans. One fact per call, in a full sentence.",
+        "parameters": {"type": "object", "properties": {"note": {"type": "string"}}, "required": ["note"]},
+    },
+    {
+        "name": "forget",
+        "description": "Drop remembered notes that mention a word or phrase; \"everything\" drops them all.",
+        "parameters": {"type": "object", "properties": {"about": {"type": "string"}}, "required": ["about"]},
     },
     {
         "name": "claude_status",
@@ -232,11 +278,18 @@ def options():
 
 
 def settings_message(opts, history):
+    # What Muse knows as the conversation starts: roughly when it is, and what
+    # it was asked to remember.
+    t = muse_world.time_report(opts["timezone"])
+    prompt = opts["prompt"] + " It is %s, %s, around %s." % (t["weekday"], t["date"], t["time"])
+    notes = muse_world.notes()
+    if notes:
+        prompt += " What you remember about the user: " + " ".join("- %s" % n for n in notes)
     agent = {
         "listen": {"provider": {"type": "deepgram", "model": opts["listen_model"]}},
         "think": {
             "provider": {"type": opts["think_provider"], "model": opts["think_model"]},
-            "prompt": opts["prompt"],
+            "prompt": prompt,
             "functions": TOOLS,
         },
         "speak": {"provider": {"type": "deepgram", "model": opts["voice"]}},
@@ -510,6 +563,29 @@ class Voice:
             if chosen:
                 self.link.send_json({"type": "voice", "set": chosen})
             content = json.dumps({"ok": bool(chosen), **chosen})
+        elif name == "muse_status":
+            content = json.dumps(self.link.status_report())
+            log("voice: muse_status ->", content)
+        elif name == "time_now":
+            content = json.dumps(muse_world.time_report(options()["timezone"]))
+        elif name == "timer":
+            timers, action = self.link.hub.timers, args.get("action")
+            if action == "set":
+                result = timers.set(args.get("minutes"), args.get("label"))
+            elif action == "cancel":
+                result = timers.cancel(args.get("label"))
+            else:
+                result = timers.list()
+            log("voice: timer", action, "->", result)
+            content = json.dumps(result)
+        elif name == "remember":
+            result = muse_world.remember(args.get("note") or "")
+            log("voice: remember ->", result)
+            content = json.dumps(result)
+        elif name == "forget":
+            result = muse_world.forget(args.get("about") or "")
+            log("voice: forget ->", result)
+            content = json.dumps(result)
         elif name == "claude_status":
             content = self.claude_status()
             log("voice: claude_status ->", content)
