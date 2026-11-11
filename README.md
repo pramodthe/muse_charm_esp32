@@ -133,7 +133,9 @@ python3 companion/install_hooks.py
 ```
 
 This adds the hooks to `~/.claude/settings.json`, keeping your other settings and a backup.
-Restart Claude Code sessions that are already open. `install_hooks.py --remove` takes them out.
+Restart Claude Code sessions that are already open. See
+[Claude Code companion](#claude-code-companion) for what Muse then does, the online setup and how
+to check it works.
 
 ## Without your computer: the server online
 
@@ -397,6 +399,41 @@ from your computer (macOS `say`, or `--wav file.wav`) and saves the spoken reply
 
 ## Claude Code companion
 
+**Why.** When you hand [Claude Code](https://code.claude.com) a task, it works for minutes at a
+time and sometimes stops to ask before running a command. If you have switched to another window,
+you don't notice either. Muse sits next to your keyboard and shows it at a glance: thinking,
+working on a file, waiting for your OK, or done. You can look away from the terminal and still
+know when Claude needs you, and you can ask Muse out loud: "what is Claude doing?"
+
+**How it connects.** Claude Code runs [hooks](https://code.claude.com/docs/en/hooks), small
+commands it starts at events such as "a tool is about to run" or "the reply is finished". The
+Muse hooks send each event to the companion server, which turns it into a mood and a short
+caption and passes that to Muse over its websocket:
+
+```
+Claude Code ──hook (each event)──> companion server ──websocket──> Muse
+```
+
+**Set it up**, after the companion server is running and Muse shows "Linked to …":
+
+| Your server runs | Run once, from the repository's folder | The hooks send events to |
+| --- | --- | --- |
+| On your computer (step 3) | `python3 companion/install_hooks.py` | `http://127.0.0.1:8765/hook`, on this computer only |
+| Online (see [above](#without-your-computer-the-server-online)) | `python3 companion/install_hooks.py --online` | Your online server, with the token from `.env`; `muse_hook.py` strips each event down to what Muse shows first |
+
+Both add the hooks to `~/.claude/settings.json` (your other settings stay, and a backup is saved
+as `~/.claude/settings.json.muse-backup`). Then restart any Claude Code sessions that are already
+open; new sessions pick the hooks up by themselves. Running it again switches between the two
+modes. `--print` shows the hooks without changing anything, and `--remove` takes them out.
+
+**Check it works.** Start a Claude Code session in any project: Muse waves and shows the project
+name. Ask Claude for something: Muse shows "Thinking..." with a thought cloud, then the tool it
+runs. Without Muse at hand, `python3 companion/muse_companion.py demo` (add `--online` for the
+online server) plays a made-up session, and `curl http://127.0.0.1:8765/` shows what a local
+server sees.
+
+**What Muse does:**
+
 | Claude Code | Muse |
 | --- | --- |
 | A session starts | Waves, shows the project name |
@@ -408,11 +445,13 @@ from your computer (macOS `say`, or `--wav file.wav`) and saves the spoken reply
 | Compacting its memory | Squeezes: "Tidying up memory" |
 | The session ends | Waves goodbye |
 
-With several sessions open, Muse shows the one that most needs you. Prompts, file contents and
-commands stay on your computer: Muse only receives the mood, a short description such as "Editing
-face.c", and the project folder name. `python3 companion/muse_companion.py demo` plays a made-up
-session, and `curl http://127.0.0.1:8765/` shows what the server sees. See
-[companion/README.md](companion/README.md) for the details.
+With several sessions open, Muse shows the one that most needs you. Muse never presses anything
+for you: answering Claude's questions stays in your terminal.
+
+**Privacy.** Prompts, file contents and commands stay on your computer. Muse only receives the
+mood, a short description such as "Editing face.c" or Claude's one-line description of a command,
+and the project folder name. Online, `python3 companion/muse_hook.py --print < event.json` shows
+exactly what would be sent. See [companion/README.md](companion/README.md) for the details.
 
 ## Settings
 
@@ -589,6 +628,10 @@ the scene, because the anchors are taken from them.
 - **The screen goes black but Muse still chirps:** the panel lost its settings in a supply dip.
   Muse writes them again every 3 seconds, which should bring the picture back; if it happens
   often, try another USB cable or port.
+- **Muse doesn't react to Claude Code:** check the hooks are in `~/.claude/settings.json`
+  (`python3 companion/install_hooks.py --print` shows what they look like), that the session was
+  started after installing them, and that local hooks go with a local server and `--online` hooks
+  with an online one (run `install_hooks.py` again with or without `--online` to switch).
 - **Muse stays on "Thinking..." after you interrupt Claude:** interrupted turns send no "done"
   event, so the mood clears by itself after five minutes, or at your next prompt.
 - **Muse dozes off too soon, or you'd rather it never slept:** change *Doze off after* in
