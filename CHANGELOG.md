@@ -12,6 +12,7 @@
 - `install_hooks.py --online`: the hooks run `muse_hook.py`, which keeps only what Muse shows (no prompts, file contents or commands) and sends it in the background.
 - `test_voice.py --online` and `muse_companion.py demo --online` test the deployed server.
 - Deploying again hands Muse over: the old version lets Muse go (`/retire`) so the new one can start.
+- `blender/export_clips.py` also runs on a .blend that still has the model's older object names, and takes the standing pose from the rig wherever its rest pose is. The export from `muse.blend` is unchanged.
 
 ## 0.5.0 (2026-11-11)
 

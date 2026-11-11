@@ -9,6 +9,9 @@ Run from the repository root:
 
     blender -b blender/muse.blend --python blender/export_clips.py -- --out assets
 
+Another .blend of the same character and rig works in place of muse.blend,
+including one that still has the older object names (see ALIASES).
+
 Options (after the "--"):
     --out DIR          where anchors.json and frames/ go (default: assets)
     --png-dir DIR      where the PNG renders go (default: build/render)
@@ -41,6 +44,29 @@ EYE_L, EYE_R, MOUTH = "Eye L", "Eye R", "Mouth Smile"
 FACE_PARTS = [EYE_L, EYE_R, "Eye Highlight L", "Eye Highlight R", "Eye Happy L", "Eye Happy R", MOUTH, "Mouth Open"]
 REST_EYE_SIZE = [10, 13]  # pixels, drawn by the firmware
 
+# Names the same things have in older versions of the model
+ALIASES = {
+    RIG: ["V5 | MUSE grounded rig"],
+    CAMERA: ["V11 | DEVICE 368x448"],
+    WAVE_SOURCE_ACTION: ["Muse | wave hello 10s"],
+    EYE_L: ["V6 | glossy dot eye L"],
+    EYE_R: ["V6 | glossy dot eye R"],
+    "Eye Highlight L": ["V6 | eye reflection L"],
+    "Eye Highlight R": ["V6 | eye reflection R"],
+    "Eye Happy L": ["V5 | happy closed eye L"],
+    "Eye Happy R": ["V5 | happy closed eye R"],
+    MOUTH: ["V5 | small curved smile"],
+    "Mouth Open": ["V8 | open happy mouth"],
+}
+
+
+def find(collection, name):
+    """The object or action called `name`, or what an older model calls it."""
+    for candidate in [name] + ALIASES.get(name, []):
+        if candidate in collection:
+            return collection[candidate]
+    sys.exit(f"'{name}' is missing from the .blend (also tried: {', '.join(ALIASES.get(name, [])) or 'nothing'})")
+
 # Expressions the clips can request per frame (see firmware/main/muse.h)
 NORMAL, HAPPY, SQUEEZE, DIZZY = 0, 1, 2, 3
 # Clip flags read by the firmware
@@ -51,8 +77,10 @@ LOOP, INDEXED, HOLD_LAST = 1, 2, 4
 # ---------------------------------------------------------------------------
 ARM_REST_ANGLE = 120.0  # angle of the arm bones in the rest pose
 REST_ARM = (36.0, 28.0, 20.0, 0.0)  # upper arm, forearm, hand, forward swing
-STANCE_Z = 0.075  # pelvis height offset of the standing pose
-FOOT_X = 0.25
+# The standing pose, in the rig's own space: how high the pelvis is and how far
+# out the feet are. The rig is moved there from its rest pose, wherever that is.
+STANCE_PELVIS_Z = 0.875
+STANCE_FOOT_X = 0.514
 
 
 def _conj(rig, bone, rotation):
@@ -100,11 +128,15 @@ def apply_pose(rig, p):
     for name, value in q.items():
         rig.pose.bones[name].rotation_quaternion = value
     rig.pose.bones["spine"].scale = (p["sx"], p["sz"], p["sx"])
-    mp = rig.data.bones["pelvis"].matrix_local.to_3x3().inverted()
-    rig.pose.bones["pelvis"].location = mp @ Vector((p["px"], 0, STANCE_Z + p["pz"] + p["hop"]))
-    for side, s in (("L", -1), ("R", 1)):
-        mf = rig.data.bones["foot." + side].matrix_local.to_3x3().inverted()
-        rig.pose.bones["foot." + side].location = mf @ Vector((-s * FOOT_X, 0, p["hop"]))
+    pelvis = rig.data.bones["pelvis"]
+    mp = pelvis.matrix_local.to_3x3().inverted()
+    stance_z = STANCE_PELVIS_Z - pelvis.head_local.z
+    rig.pose.bones["pelvis"].location = mp @ Vector((p["px"], 0, stance_z + p["pz"] + p["hop"]))
+    for side in "LR":
+        foot = rig.data.bones["foot." + side]
+        mf = foot.matrix_local.to_3x3().inverted()
+        x = foot.head_local.x
+        rig.pose.bones["foot." + side].location = mf @ Vector((math.copysign(STANCE_FOOT_X, x) - x, 0, p["hop"]))
 
 
 def snapshot(rig):
@@ -254,7 +286,7 @@ def to_pixels(scene, camera, world_point):
 
 def screen_centre(scene, name):
     """Centre of an object's on-screen bounding box, from its evaluated mesh."""
-    obj = bpy.data.objects[name]
+    obj = find(bpy.data.objects, name)
     evaluated = obj.evaluated_get(bpy.context.evaluated_depsgraph_get())
     mesh = evaluated.to_mesh()
     pts = [to_pixels(scene, scene.camera, obj.matrix_world @ v.co) for v in mesh.vertices]
@@ -265,9 +297,7 @@ def screen_centre(scene, name):
 
 def build_clips(scene, rig):
     """Pose every frame of every clip; returns (pose snapshots, expressions, clip table)."""
-    source = bpy.data.actions.get(WAVE_SOURCE_ACTION)
-    if source is None:
-        sys.exit(f"Action '{WAVE_SOURCE_ACTION}' is missing from the .blend")
+    source = find(bpy.data.actions, WAVE_SOURCE_ACTION)
     rig.animation_data_create()
     snaps, exprs, table = [], [], []
     for name, count, fn, fps, flags in CLIPS:
@@ -336,8 +366,8 @@ def render_frames(scene, png_dir):
     os.makedirs(png_dir, exist_ok=True)
     hidden = {}
     for name in FACE_PARTS:
-        obj = bpy.data.objects[name]
-        hidden[name] = obj.hide_render
+        obj = find(bpy.data.objects, name)
+        hidden[obj] = obj.hide_render
         obj.hide_render = True
     scene.render.resolution_x, scene.render.resolution_y = WIDTH, HEIGHT
     scene.render.resolution_percentage = 100
@@ -345,8 +375,8 @@ def render_frames(scene, png_dir):
     scene.render.image_settings.color_mode = "RGB"
     scene.render.filepath = os.path.join(png_dir, "f_")
     bpy.ops.render.render(animation=True)
-    for name, value in hidden.items():
-        bpy.data.objects[name].hide_render = value
+    for obj, value in hidden.items():
+        obj.hide_render = value
 
 
 def encode_frames(png_dir, out_dir):
@@ -376,8 +406,8 @@ def main():
     out_dir, png_dir = os.path.abspath(args.out), os.path.abspath(args.png_dir)
 
     scene = bpy.context.scene
-    scene.camera = bpy.data.objects[CAMERA]
-    rig = bpy.data.objects[RIG]
+    scene.camera = find(bpy.data.objects, CAMERA)
+    rig = find(bpy.data.objects, RIG)
 
     snaps, exprs, table = build_clips(scene, rig)
     key_clips(scene, rig, snaps)
