@@ -256,7 +256,7 @@ class Hub:
             link.send_json(self.sent)
         try:
             while True:
-                op, data = await asyncio.wait_for(ws.read_message(reader, writer), 60)
+                op, data = await ws.read_message(reader, writer, frame_timeout=60)  # Muse pings every 10 s
                 if op == ws.CLOSE:
                     writer.write(ws.frame(ws.CLOSE, data[:2]))
                     break

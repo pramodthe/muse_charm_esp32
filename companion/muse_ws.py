@@ -60,12 +60,17 @@ async def read_frame(reader):
     return bool(b1 & 0x80), b1 & 0x0F, data
 
 
-async def read_message(reader, writer, masked_replies=False):
+async def read_message(reader, writer, masked_replies=False, frame_timeout=None):
     """(opcode, payload) of the next text, binary or close message. Answers
-    pings and joins fragmented messages."""
+    pings and joins fragmented messages. frame_timeout limits the wait for each
+    frame (pings included), so a quiet but live peer is not mistaken for a
+    dead one."""
     parts, op = [], None
     while True:
-        fin, code, data = await read_frame(reader)
+        if frame_timeout:
+            fin, code, data = await asyncio.wait_for(read_frame(reader), frame_timeout)
+        else:
+            fin, code, data = await read_frame(reader)
         if code == PING:
             writer.write(frame(PONG, data, masked_replies))
             continue
