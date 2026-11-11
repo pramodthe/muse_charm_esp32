@@ -64,8 +64,12 @@ Claude Code ──hooks (curl)──> muse_companion.py <──websocket──> 
    chmod 600 ~/.config/muse/deepgram_key
    ```
 
+   In bash, the second line is
+   `read -rsp 'Paste your Deepgram key: ' k && printf %s "$k" > ~/.config/muse/deepgram_key && unset k`.
    Or set `DEEPGRAM_API_KEY` in the server's environment. The server notices the key within a
-   few seconds; `curl http://127.0.0.1:8765/` then shows `"voice": "ready"`.
+   few seconds; `curl http://127.0.0.1:8765/` then shows `"voice": "ready"`. The key stays in
+   that file: it is never sent to Muse. New to Deepgram? See
+   [Setting up Deepgram](../README.md#setting-up-deepgram).
 
 4. For the Claude Code companion, add the hooks (your other settings and hooks are kept, and a
    backup is saved as `~/.claude/settings.json.muse-backup`):

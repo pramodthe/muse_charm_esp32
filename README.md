@@ -111,18 +111,9 @@ approving in System Settings → Network → Firewall → Options again after ev
 
 ### 4. Add a Deepgram key for voice chat
 
-Get an API key from the [Deepgram console](https://console.deepgram.com) (usage is billed to your
-Deepgram account) and save it where the server looks for it. This asks for the key and hides what
-you paste (zsh, the macOS default shell):
-
-```sh
-mkdir -p ~/.config/muse
-read -rs 'k?Paste your Deepgram key: ' && print -rn -- "$k" > ~/.config/muse/deepgram_key && unset k
-chmod 600 ~/.config/muse/deepgram_key
-```
-
-Or set `DEEPGRAM_API_KEY` in the server's environment. The server notices the key within a few
-seconds. Then hold BOOT, talk, and let go.
+Voice chat needs a free [Deepgram](https://deepgram.com) account and an API key; everything else
+works without one. See [Setting up Deepgram](#setting-up-deepgram) below; it takes a few minutes.
+Then hold BOOT, talk, and let go.
 
 ### 5. Connect Claude Code
 
@@ -150,6 +141,50 @@ Speech to text, the reply and the voice all come from the
 4.5 (through Deepgram) as the default LLM. The microphone streams only while you hold BOOT. The
 connection to Deepgram opens on the first hold, stays open between turns and closes after two
 quiet minutes.
+
+### Setting up Deepgram
+
+[Deepgram](https://deepgram.com) runs the whole conversation in the cloud: it turns your speech
+into text, gets a reply from an LLM and speaks it. You only need an account and an API key; the
+companion server does the rest.
+
+1. Sign up at [console.deepgram.com](https://console.deepgram.com). New accounts get free credit
+   (a $200 credit without a credit card at the time of writing), which is plenty for chatting
+   with Muse. After that, usage is billed per minute of conversation; see Deepgram's pricing page.
+2. In the console, open **API Keys** and create a key. Copy it straight away, as the console may
+   not show it again.
+3. Save it on the computer that runs the companion server. This asks for the key and hides what
+   you paste (zsh, the macOS default shell):
+
+   ```sh
+   mkdir -p ~/.config/muse
+   read -rs 'k?Paste your Deepgram key: ' && print -rn -- "$k" > ~/.config/muse/deepgram_key && unset k
+   chmod 600 ~/.config/muse/deepgram_key
+   ```
+
+   In bash (most Linux systems), the second line is
+   `read -rsp 'Paste your Deepgram key: ' k && printf %s "$k" > ~/.config/muse/deepgram_key && unset k`.
+   Or skip the file and set `DEEPGRAM_API_KEY` in the server's environment.
+4. Check it: `curl http://127.0.0.1:8765/` shows `"voice": "ready"` within a few seconds (no
+   restart needed), or a message saying what is wrong with the key file. For a full round trip
+   without Muse, run `python3 companion/test_voice.py "Hello Muse!"` and play `reply.wav`.
+
+**Where the key lives.** Only in `~/.config/muse/deepgram_key` on your computer, outside the
+repository, so git never sees it. It is never sent to Muse or stored on the board; the server
+uses it to talk to Deepgram. To change it, run step 3 again; to stop voice chat, delete the
+file; if you think it has leaked, revoke it in the Deepgram console. Anyone on your local network
+could talk through the server and spend your Deepgram credit (they can't read the key), so run
+it on networks you trust.
+
+**Where the Deepgram code is.** All of it is in
+[`companion/muse_voice.py`](companion/muse_voice.py), on your computer: it opens the Voice Agent
+websocket, sends the settings (models, voice, Muse's personality and the functions it can call),
+relays the audio both ways and passes subtitles and gestures to Muse. The firmware has no
+Deepgram code: `firmware/main/agent.c` only streams the microphone to the server and plays what
+comes back. No other key is needed; the default LLM (Claude Haiku 4.5) runs through Deepgram and
+is billed with it.
+
+### Voice options
 
 To change the voice, the model or Muse's personality, create `~/.config/muse/voice.json`:
 
