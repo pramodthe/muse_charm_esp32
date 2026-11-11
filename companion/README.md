@@ -29,7 +29,7 @@ Claude Code ──hooks (curl)──> muse_companion.py <──websocket──> 
 | `muse_world.py` | The AI's time, timers, memory and its view of Muse's sensors |
 | `muse_jobs.py` | Background jobs: starts `muse_worker.py`, keeps the results, tells Muse when one is done |
 | `muse_worker.py` | One job, in its own process: a Deep Agent that searches the web and writes up what it finds |
-| `muse_results.py` | The `/results` page for reading the write-ups |
+| `muse_results.py` | The web app at `/results`: write-ups, new requests, memory, Muse's status |
 | `muse_ws.py` | A small websocket implementation (server and client) |
 | `muse_env.py` | Reads your keys from the repository's `.env` file |
 | `install_hooks.py` | Adds or removes the Claude Code hooks |
@@ -154,10 +154,15 @@ has Muse announce the summary (see [Speaking first](#speaking-first)).
 | Model | `worker_model` in `voice.json` (default `anthropic:claude-sonnet-5-5`) |
 | Testing | `MUSE_WORKER_FAKE=1` makes the worker return a canned result without a model |
 
-The write-ups are read at `/results` on the server (`muse_companion.py results` opens it). The
-page itself holds no data; it fetches `/results.json` and `/results/<id>.json`, which need the
-token online. `MUSE_RESULTS_PUBLIC=true` in `.env` (then deploy again) drops that: anyone who has
-the server's address can then read your write-ups, so leave it off if they might be private. The command passes the token after the `#` of the address, which browsers do not
+The write-ups are read in the web app at `/results` on the server (`muse_companion.py results`
+opens it). The page itself holds no data. It fetches `/results.json` and `/results/<id>.json`
+for the jobs and `/app.json` for Muse's state, timers and memory, and posts `{"task": ...}` to
+`/ask` (which calls `Hub.start_job()`, the same as the `work_on` tool) and `{"add": ...}` or
+`{"forget": ...}` to `/memory`. All of these need the token online; on your own computer the
+page is open, and only that computer may post. Posts must carry `Content-Type: application/json`
+and an `X-Muse` header, which a form on another website cannot send. `MUSE_RESULTS_PUBLIC=true` in `.env` (then deploy again) drops that: anyone who has
+the server's address can then read your requests and write-ups (the two `/results` addresses
+only), so leave it off if they might be private. The command passes the token after the `#` of the address, which browsers do not
 send to servers, and the page keeps it in the browser's storage.
 
 ## Speaking first

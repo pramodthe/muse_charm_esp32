@@ -164,6 +164,18 @@ def forget(about):
     return {"ok": True, "forgotten": len(items) - len(keep), "still_remembered": len(keep)}
 
 
+def forget_note(note):
+    """Drop exactly this note (the web app's Forget button)."""
+    note = " ".join(str(note).split()).lower()
+    items = notes()
+    keep = [n for n in items if n.lower() != note]
+    try:
+        _save(keep)
+    except OSError as e:
+        return {"ok": False, "error": "could not save: %s" % e}
+    return {"ok": True, "forgotten": len(items) - len(keep)}
+
+
 # ---------------------------------------------------------------- timers
 class Timers:
     """Timers for everyone connected to this server. `alert(text)` is called

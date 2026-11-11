@@ -6,7 +6,8 @@ server itself stays small and keeps answering Muse while the job runs:
 
     python3 muse_worker.py /path/to/job.json
 
-The job file holds {"task": "...", "model": "...", "max_searches": 8}. The
+The job file holds {"task": "...", "model": "...", "about_user": [...],
+"today": "..."}. The
 result is written back into the same file: "status" ("done" or "failed"),
 "summary" (one or two sentences for Muse to say) and "report" (markdown).
 
@@ -84,7 +85,13 @@ def research(job):
     # StateBackend: the agent's files live in memory only, and it cannot run commands.
     agent = create_deep_agent(model=job.get("model") or MODEL, tools=[search], system_prompt=INSTRUCTIONS,
                               backend=StateBackend())
-    result = agent.invoke({"messages": [{"role": "user", "content": job["task"]}]},
+    task = job["task"]
+    if job.get("today"):
+        task += "\n\nToday is %s." % job["today"]
+    if job.get("about_user"):
+        task += ("\n\nWhat Muse remembers about its owner (use what is relevant; do not repeat it back):\n" +
+                 "\n".join("- %s" % note for note in job["about_user"]))
+    result = agent.invoke({"messages": [{"role": "user", "content": task}]},
                           {"recursion_limit": MAX_STEPS})
     return text_of(result["messages"][-1].content)
 

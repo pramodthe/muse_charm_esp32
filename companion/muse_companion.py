@@ -267,6 +267,24 @@ class Hub:
         if not self.devices:
             self.missed = (self.missed + [text])[-3:]
 
+    def start_job(self, task, title=""):
+        """Hand a job to the background worker, with what Muse knows about you."""
+        opts = muse_voice.options()
+        t = muse_world.time_report(opts["timezone"])
+        return self.jobs.start(task, title, opts["worker_model"], about=muse_world.notes(),
+                               today="%s %s" % (t["weekday"], t["date"]))
+
+    def app_state(self):
+        """For the web app: how Muse is, its timers, and what it remembers."""
+        return {
+            "connected": len(self.devices),
+            "muse": next((link.status_report() for link in self.devices.values() if link.status), None),
+            "timers": self.timers.list()["timers"],
+            "memory": muse_world.notes(),
+            "voice": muse_voice.key_status()[0] is not None,
+            "cannot_work": self.jobs.problem() or "",
+        }
+
     def on_job_done(self, job):
         """A background job has finished: Muse says so, with the answer in a sentence."""
         if job.get("status") == "done":
@@ -543,6 +561,37 @@ async def handle(hub, reader, writer):
                           "Sec-WebSocket-Accept: %s\r\n\r\n" % ws.accept_key(key)).encode())
             await writer.drain()
             await hub.serve_device(reader, writer, peer)
+            return
+
+        if path in ("/app.json", "/ask", "/memory"):
+            # The web app's private side: Muse's state, new requests, its memory.
+            if not (authorized(hub, headers) if hub.token else (method == "GET" or is_loopback(peer))):
+                respond(writer, "401 Unauthorized")
+                return
+            if method == "GET" and path == "/app.json":
+                respond(writer, "200 OK", json.dumps(hub.app_state()).encode())
+                return
+            # Only the page itself may post: a form on another site cannot send these headers.
+            n = int(headers.get("content-length") or 0)
+            if (method != "POST" or path == "/app.json" or n > 16384 or "x-muse" not in headers
+                    or not headers.get("content-type", "").startswith("application/json")):
+                respond(writer, "400 Bad Request")
+                return
+            try:
+                body = json.loads(await asyncio.wait_for(reader.readexactly(n), 10))
+                if not isinstance(body, dict):
+                    raise ValueError
+            except ValueError:
+                respond(writer, "400 Bad Request")
+                return
+            if path == "/ask":
+                result = hub.start_job(body.get("task"), body.get("title") or "")
+                log("asked from the web app ->", result)
+            elif body.get("forget"):
+                result = muse_world.forget_note(body["forget"])
+            else:
+                result = muse_world.remember(str(body.get("add") or ""))
+            respond(writer, "200 OK", json.dumps(result).encode())
             return
 
         if method == "GET" and path == "/results":

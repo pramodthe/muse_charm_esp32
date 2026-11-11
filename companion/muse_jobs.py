@@ -112,7 +112,9 @@ class Jobs:
             return "already working on %d things; wait for one to finish" % len(self.running)
         return None
 
-    def start(self, task, title="", model=""):
+    def start(self, task, title="", model="", about=None, today=""):
+        """Start a job. `about` is what Muse remembers about its owner and `today`
+        the date where they are, both handed to the worker."""
         task = " ".join(str(task or "").split())[:TASK_MAX]
         if len(task) < 8:
             return {"ok": False, "error": "say what to work on, in a full sentence"}
@@ -124,7 +126,7 @@ class Jobs:
                             "right now and why. Do not say you are working on it or that you will try again."}
         title = " ".join(str(title or "").split())[:60] or task[:60]
         job = {"id": secrets.token_hex(8), "title": title, "task": task, "status": "running",
-               "created": time.time(), "model": model}
+               "created": time.time(), "model": model, "about_user": list(about or [])[:40], "today": today}
         _write(job)
         self.running[job["id"]] = asyncio.ensure_future(self._run(job))
         log("job started: %s (%s)" % (title, job["id"]))
@@ -184,6 +186,8 @@ class Jobs:
         """A job without its write-up, for lists."""
         out = {k: job.get(k) for k in ("id", "title", "task", "status", "created", "took_s", "summary", "error")
                if job.get(k) is not None}
+        if job.get("report"):
+            out["words"] = len(job["report"].split())
         if job.get("status") == "running":
             out["running_for_s"] = round(time.time() - job.get("created", time.time()))
         return out

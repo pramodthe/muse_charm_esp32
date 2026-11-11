@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.0 (2026-11-12)
+
+- **A web app** at `/results`, replacing the results page. Activity shows each request with what Muse said and the write-up to read, and takes new requests typed at the bottom; Ideas lists things to hand over and things to say out loud; Memory shows what Muse remembers and lets you add or forget notes; the side shows whether Muse is connected, its battery and timers.
+- New server addresses for it: `/app.json`, `/ask` and `/memory`. They always need the token online.
+- The research worker is told today's date and what Muse remembers about you.
+
 ## 0.8.0 (2026-11-11)
 
 - **Background jobs.** Ask Muse for something bigger ("research the best budget 3D printers") and it says it is on it, a worker searches the web and writes up what it finds, and a few minutes later Muse tells you the answer in a sentence. The AI's new tools are `work_on` and `work_status`.

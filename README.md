@@ -256,13 +256,31 @@ To set it up:
    fetches the worker's packages on the first job); otherwise
    `pip install deepagents langchain-anthropic` for a Python 3.11 or later and name it in
    `MUSE_WORKER_PYTHON`.
-3. Read the results: `python3 companion/muse_companion.py results` opens the page in your
-   browser, signed in. Bookmark it; it works on your phone too once you paste the token there.
-   To skip the token, add `MUSE_RESULTS_PUBLIC=true` to `.env` and deploy again; anyone who has
-   the server's address can then read your write-ups.
+3. Open the web app: `python3 companion/muse_companion.py results` opens it in your browser,
+   signed in (see [The web app](#the-web-app)).
 
 A research job uses far more of the model than a spoken reply, and it is billed to your
-Anthropic account. `worker_model` in `voice.json` chooses the model.
+Anthropic account. `worker_model` in `voice.json` chooses the model. The worker is told today's
+date and what Muse remembers about you, so "near where I live" works once Muse knows where
+that is.
+
+### The web app
+
+The server has a small web app at `/results`, for the things a tiny screen is bad at:
+
+| | |
+| --- | --- |
+| Activity | Each request, what Muse said about it, and the write-up to read. Type a new request at the bottom; it starts the same background job as asking out loud, and Muse announces the result |
+| Ideas | Things to hand over (a tap puts one in the box) and things to say out loud |
+| Memory | What Muse remembers about you: add a note, or forget one |
+| On the side | Whether Muse is connected, its battery, and running timers |
+
+`python3 companion/muse_companion.py results` opens it signed in, and the browser stays signed
+in; on a phone, paste the token from `~/.config/muse/server.json` once. Online, everything needs
+the token. With `MUSE_RESULTS_PUBLIC=true` in `.env` (then deploy again), anyone who has the
+server's address can read the requests and write-ups without it; asking, memory and Muse's status
+still need the token. The page is one file, [`companion/muse_results.py`](companion/muse_results.py),
+with no build step and nothing loaded from other sites.
 
 ### Muse speaks first
 
@@ -463,7 +481,7 @@ companion/             runs on your computer
   muse_world.py        the AI's time, timers, memory and view of Muse's sensors
   muse_jobs.py         background jobs: starts them, keeps their results
   muse_worker.py       one job: a Deep Agent that researches and writes up
-  muse_results.py      the page where you read the write-ups
+  muse_results.py      the web app: write-ups, new requests, memory, Muse's status
   muse_ws.py           small websocket implementation
   muse_env.py          reads your keys from .env
   install_hooks.py     adds or removes the Claude Code hooks

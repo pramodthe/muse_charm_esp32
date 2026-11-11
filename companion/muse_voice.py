@@ -725,7 +725,7 @@ class Voice:
             log("voice: forget ->", result)
             content = json.dumps(result)
         elif name == "work_on":
-            result = self.link.hub.jobs.start(args.get("task"), args.get("title"), options()["worker_model"])
+            result = self.link.hub.start_job(args.get("task"), args.get("title"))
             log("voice: work_on ->", result)
             content = json.dumps(result)
         elif name == "work_status":
