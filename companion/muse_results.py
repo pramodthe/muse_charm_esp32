@@ -17,10 +17,11 @@ is never sent to a server), and the page stores it and removes it from the
 address bar. On your own computer, without a token, the page is open and only
 this computer may post.
 
-It is laid out as a chat, the way personal-agent apps such as OpenMuse
-(https://github.com/CopilotKit/openmuse) are: your requests on the right,
-Muse's answers on the left with a card for each write-up, a message box at the
-bottom. Two more tabs hold ideas to start from and what Muse remembers.
+It is laid out as a chat, the way OpenMuse (https://github.com/CopilotKit/openmuse,
+MIT) is: Muse at the top, your requests on the right, Muse's answers on the
+left with a card for each write-up, a message box and the tabs at the bottom.
+The colours, corner radii and type sizes follow the Meta Horizon OS UI Set
+(its public Figma design kit); the icons are this project's own.
 """
 
 PAGE = r"""<!doctype html>
@@ -29,134 +30,144 @@ PAGE = r"""<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
-<meta name="theme-color" content="#f6f7f7" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#101415" media="(prefers-color-scheme: dark)">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#fcfcfc">
 <title>Muse</title>
 <style>
+  /* Light only. Colours, radii and type sizes follow the Meta Horizon OS UI Set (text #272727, surfaces at
+     5 % of it, #f2f2f2 bubbles, pill buttons, 14/20 and 12/16 medium text); the pale blue of your own
+     messages and the overall chat layout follow OpenMuse. */
   :root {
-    --canvas: #f6f7f7; --card: #ffffff; --text: #131a1c; --muted: #677177; --line: #e6e9e9;
-    --theirs: #eceeef; --mine: #d3f1e8; --brand: #0f766e; --brand-ink: #ffffff; --tile: #e1f3ef;
-    --danger: #b3261e; --danger-bg: #fcedec; --ok: #1f9d6b; --shade: rgba(19, 26, 28, 0.36);
-    --lift: 0 1px 2px rgba(19, 26, 28, 0.05), 0 8px 28px rgba(19, 26, 28, 0.07);
-  }
-  @media (prefers-color-scheme: dark) {
-    :root { --canvas: #101415; --card: #1a2022; --text: #eef1f1; --muted: #98a2a6; --line: #2a3134;
-            --theirs: #232a2d; --mine: #14534c; --brand: #4fd1c5; --brand-ink: #062b28; --tile: #173b37;
-            --danger: #ff9b93; --danger-bg: #3a1f1d; --ok: #5fd39e; --shade: rgba(0, 0, 0, 0.6);
-            --lift: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 28px rgba(0, 0, 0, 0.35); }
+    color-scheme: light;
+    --canvas: #fcfcfc; --card: #ffffff; --text: #272727; --muted: rgba(39, 39, 39, 0.7); --faint: rgba(39, 39, 39, 0.45);
+    --line: #eeeef0; --fill: rgba(39, 39, 39, 0.05); --fill-2: rgba(39, 39, 39, 0.1); --theirs: #f2f2f2; --mine: #c8e7ff;
+    --ink: #272727; --ink-label: #ffffff; --link: #1473c8; --ok: #1f9d55; --danger: #c22a3c; --danger-bg: #fbefed;
+    --shade: rgba(39, 39, 39, 0.32);
+    --punched: inset 0 1px 1px rgba(39, 39, 39, 0.05), 0 1px 1px #ffffff;
+    --lift: 0 1px 2px rgba(39, 39, 39, 0.06), 0 10px 30px rgba(39, 39, 39, 0.08);
   }
   * { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
   body { margin: 0; background: var(--canvas); color: var(--text);
-         font: 15.5px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif; }
+         font: 15px/22px Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif; }
   button, input, textarea { font: inherit; color: inherit; }
   button { cursor: pointer; border: 0; background: none; padding: 0; }
   svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round;
         stroke-linejoin: round; flex: none; }
-  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+  :focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
   [hidden] { display: none !important; }
-  .app { max-width: 760px; margin: 0 auto; min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; }
+  .app { max-width: 720px; margin: 0 auto; min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column;
+         padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
 
-  /* top bar: who you are talking to, and the tabs */
-  .bar { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 12px; padding: 14px 20px;
-         background: color-mix(in srgb, var(--canvas) 88%, transparent); -webkit-backdrop-filter: blur(14px);
-         backdrop-filter: blur(14px); }
-  .face { position: relative; width: 46px; height: 46px; flex: none; }
-  .face img, .face b { width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center;
-                       background: var(--tile); color: var(--brand); font-size: 21px; font-weight: 700; object-fit: cover; }
-  .face i { position: absolute; right: 0; bottom: 0; width: 13px; height: 13px; border-radius: 50%;
-            background: var(--muted); border: 2.5px solid var(--canvas); }
+  /* top: who you are talking to */
+  .bar { position: sticky; top: 0; z-index: 3; display: flex; flex-direction: column; align-items: center; gap: 2px;
+         padding: 14px 20px 8px; background: var(--canvas); }
+  .bar::after { content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 16px; pointer-events: none;
+                background: linear-gradient(to bottom, var(--canvas), transparent); }
+  .face { position: relative; width: 56px; height: 56px; }
+  .face img, .face b { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center;
+                       background: var(--mine); color: var(--text); font-size: 24px; font-weight: 600; object-fit: cover; }
+  .face i { position: absolute; right: 1px; bottom: 1px; width: 14px; height: 14px; border-radius: 50%;
+            background: #b8b8b8; border: 2.5px solid var(--canvas); }
   .face i.on { background: var(--ok); }
-  .who { min-width: 0; flex: 1; }
-  .who strong { display: block; font-size: 17px; letter-spacing: -0.01em; line-height: 1.2; }
-  .who span { display: block; font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .tabs { display: flex; gap: 2px; background: var(--theirs); padding: 4px; border-radius: 999px; }
-  .tabs button { display: flex; align-items: center; gap: 7px; padding: 7px 14px; border-radius: 999px; font-weight: 600;
-                 font-size: 14px; color: var(--muted); }
-  .tabs button svg { width: 17px; height: 17px; }
-  .tabs button[aria-current="page"] { background: var(--card); color: var(--text); box-shadow: 0 1px 2px rgba(19, 26, 28, 0.08); }
+  .who { text-align: center; }
+  .who strong { display: block; font-size: 16px; line-height: 22px; font-weight: 600; margin-top: 2px; }
+  .who span { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; margin-top: 4px; padding: 4px 12px;
+              border-radius: 1000px; background: var(--fill); font-size: 12px; line-height: 16px; font-weight: 500; color: var(--muted); }
+  .who span:empty { display: none; }
 
-  main { flex: 1; padding: 8px 20px 20px; min-width: 0; }
-  h1 { font-size: 22px; letter-spacing: -0.02em; margin: 14px 0 4px; }
-  h2 { font-size: 14px; color: var(--muted); font-weight: 600; margin: 26px 4px 8px; }
-  .lede { color: var(--muted); margin: 0 0 6px; max-width: 54ch; }
+  main { flex: 1; padding: 4px 20px 16px; min-width: 0; }
+  h1 { font-size: 22px; line-height: 28px; font-weight: 600; letter-spacing: -0.02em; margin: 10px 0 4px; }
+  h2 { font-size: 12px; line-height: 16px; color: var(--muted); font-weight: 500; margin: 24px 12px 8px; }
+  .lede { color: var(--muted); margin: 0 0 6px; max-width: 54ch; font-size: 14px; line-height: 20px; }
 
   /* the conversation */
-  .day { text-align: center; margin: 22px 0 14px; }
-  .day span { font-size: 12px; font-weight: 600; color: var(--muted); background: var(--theirs); padding: 4px 12px; border-radius: 999px; }
+  .day { text-align: center; margin: 20px 0 12px; font-size: 12px; line-height: 16px; font-weight: 500; color: var(--faint); }
   .msg { display: flex; flex-direction: column; margin: 6px 0; }
-  .msg.me { align-items: flex-end; margin-top: 18px; }
-  .msg.muse { align-items: flex-start; }
-  .bubble { padding: 11px 16px; border-radius: 22px; overflow-wrap: anywhere; max-width: 88%; }
-  .me .bubble { background: var(--mine); border-bottom-right-radius: 8px; }
-  .muse .bubble { background: var(--theirs); border-bottom-left-radius: 8px; }
+  .msg.me { align-items: flex-end; margin-top: 16px; }
+  .msg.muse { align-items: flex-start; gap: 6px; }
+  .bubble { padding: 10px 16px; border-radius: 22px; overflow-wrap: anywhere; max-width: 85%; }
+  .me .bubble { background: var(--mine); }
+  .muse .bubble { background: var(--theirs); max-width: 95%; }
   .bubble.bad { background: var(--danger-bg); color: var(--danger); }
-  .time { font-size: 11.5px; color: var(--muted); margin: 4px 6px 0; }
-  .doing { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 14px; margin: 8px 6px; }
+  .time { font-size: 11px; line-height: 16px; color: var(--faint); margin: 3px 8px 0; }
+  .doing { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; line-height: 20px; margin: 6px 12px; }
   .doing svg { width: 17px; height: 17px; }
   .dots { display: inline-flex; gap: 4px; padding: 15px 16px; }
-  .dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: hop 1.3s ease-in-out infinite; }
+  .dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); animation: hop 1.3s ease-in-out infinite; }
   .dots i:nth-child(2) { animation-delay: 0.16s; } .dots i:nth-child(3) { animation-delay: 0.32s; }
-  @keyframes hop { 0%, 60%, 100% { transform: translateY(0); opacity: 0.45; } 30% { transform: translateY(-5px); opacity: 1; } }
+  @keyframes hop { 0%, 60%, 100% { transform: translateY(0); opacity: 0.5; } 30% { transform: translateY(-5px); opacity: 1; } }
   @media (prefers-reduced-motion: reduce) { .dots i { animation: none; } }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 22px; padding: 16px; width: min(100%, 440px);
-          margin-top: 6px; }
+  .card { background: var(--theirs); border-radius: 24px; padding: 18px; width: min(100%, 420px); }
   .card .head { display: flex; gap: 12px; align-items: center; }
-  .tile { width: 42px; height: 42px; border-radius: 13px; background: var(--tile); color: var(--brand); display: grid;
+  .tile { width: 40px; height: 40px; border-radius: 12px; background: var(--card); color: var(--link); display: grid;
           place-items: center; flex: none; }
-  .card .head strong { display: block; line-height: 1.3; overflow-wrap: anywhere; }
-  .card .head span { font-size: 12.5px; color: var(--muted); }
+  .card .head strong { display: block; font-weight: 600; line-height: 20px; overflow-wrap: anywhere; }
+  .card .head span { font-size: 12px; line-height: 16px; color: var(--muted); }
   .wide { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; margin-top: 14px; padding: 10px;
-          border-radius: 14px; background: var(--theirs); font-weight: 600; font-size: 14.5px; }
-  .wide:hover { background: var(--tile); }
-  .chip { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; padding: 7px 14px; border-radius: 999px;
-          background: var(--card); border: 1px solid var(--line); font-weight: 600; font-size: 14px; }
-  .welcome { text-align: center; padding: 9vh 10px 20px; }
-  .welcome .tile { width: 60px; height: 60px; border-radius: 20px; margin: 0 auto 16px; }
-  .welcome .tile svg { width: 28px; height: 28px; }
+          border-radius: 1000px; background: var(--card); font-weight: 600; font-size: 14px; line-height: 20px; }
+  .wide:hover { background: #fafafa; box-shadow: 0 0 0 1px var(--line); }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 1000px;
+          background: var(--fill); font-weight: 500; font-size: 14px; line-height: 20px; }
+  .chip:hover { background: var(--fill-2); }
+  .chip svg { width: 17px; height: 17px; }
+  .welcome { text-align: center; padding: 6vh 10px 20px; }
   .welcome h1 { margin: 0 0 6px; }
-  .welcome p { color: var(--muted); max-width: 40ch; margin: 0 auto 16px; }
-  .starters { display: flex; flex-direction: column; gap: 8px; max-width: 400px; margin: 0 auto; }
-  .starters button { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 11px 14px; text-align: left; }
-  .link { color: var(--brand); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+  .welcome p { color: var(--muted); max-width: 40ch; margin: 0 auto 18px; font-size: 14px; line-height: 21px; }
+  .starters { display: flex; flex-direction: column; gap: 8px; max-width: 380px; margin: 0 auto; }
+  .starters button { background: var(--fill); border-radius: 16px; padding: 11px 16px; text-align: left; font-size: 14px; line-height: 20px; font-weight: 500; }
+  .starters button:hover { background: var(--fill-2); }
+  .link { color: var(--link); font-weight: 600; }
 
-  /* the message box */
-  .compose { position: sticky; bottom: 0; z-index: 2; padding: 6px 20px 18px;
-             background: linear-gradient(to bottom, transparent, var(--canvas) 26%); }
+  /* the message box, and the tabs under it */
+  .compose { position: sticky; bottom: calc(68px + env(safe-area-inset-bottom)); z-index: 2; padding: 6px 20px 8px;
+             background: linear-gradient(to bottom, transparent, var(--canvas) 30%); }
   .box { display: flex; align-items: flex-end; gap: 8px; background: var(--card); border: 1px solid var(--line);
-         border-radius: 28px; padding: 7px 7px 7px 18px; box-shadow: var(--lift); }
-  .box:focus-within { border-color: var(--brand); }
-  .box textarea { flex: 1; min-width: 0; border: 0; outline: 0; background: none; resize: none; padding: 8px 0; line-height: 1.4;
-                  max-height: 8.6em; }
-  .send { width: 40px; height: 40px; border-radius: 50%; background: var(--brand); color: var(--brand-ink); display: grid;
+         border-radius: 32px; padding: 7px 7px 7px 20px; box-shadow: var(--lift); }
+  .box textarea { flex: 1; min-width: 0; border: 0; outline: 0; background: none; resize: none; padding: 9px 0; line-height: 22px;
+                  max-height: 136px; }
+  .box textarea::placeholder { color: var(--faint); }
+  .send { width: 40px; height: 40px; border-radius: 50%; background: var(--ink); color: var(--ink-label); display: grid;
           place-items: center; flex: none; }
-  .send:disabled { background: var(--theirs); color: var(--muted); cursor: default; }
-  .compose .hint { font-size: 12.5px; color: var(--muted); margin: 8px 12px 0; text-align: center; min-height: 1em; }
+  .send:disabled { background: var(--fill); color: var(--faint); cursor: default; }
+  .compose .hint { font-size: 12px; line-height: 16px; color: var(--muted); margin: 8px 12px 0; text-align: center; min-height: 0; }
+  .compose .hint:empty { display: none; }
+  .dock { position: fixed; left: 50%; bottom: calc(14px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 4;
+          display: flex; gap: 4px; padding: 6px; border-radius: 1000px; background: var(--card); border: 1px solid var(--line);
+          box-shadow: var(--lift); }
+  .dock button { display: flex; align-items: center; gap: 8px; padding: 9px 16px; border-radius: 1000px; font-size: 13px;
+                 line-height: 16px; font-weight: 500; color: var(--muted); }
+  .dock button svg { width: 18px; height: 18px; }
+  .dock button:hover { background: var(--fill); }
+  .dock button[aria-current="page"] { background: var(--ink); color: var(--ink-label); }
 
   /* lists: ideas and memory */
-  .group { background: var(--card); border: 1px solid var(--line); border-radius: 22px; overflow: hidden; }
-  .item { display: flex; align-items: center; gap: 13px; width: 100%; padding: 13px 16px; text-align: left;
-          border-top: 1px solid var(--line); }
-  .item:first-child { border-top: 0; }
-  button.item:hover { background: var(--canvas); }
-  .item .words { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-  .item .words b { display: block; font-weight: 600; }
-  .item .words span { color: var(--muted); font-size: 13.5px; }
-  .item > svg { color: var(--muted); width: 18px; height: 18px; }
-  .item .tile { width: 38px; height: 38px; border-radius: 12px; }
-  .round { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); flex: none; }
+  .group { background: var(--fill); border-radius: 16px; overflow: hidden; box-shadow: var(--punched); }
+  .item { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 60px; padding: 12px 14px; text-align: left; }
+  .item + .item { border-top: 1px solid var(--line); }
+  button.item:hover { background: var(--fill); }
+  .item .words { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 14px; line-height: 20px; font-weight: 500; }
+  .item .words b { display: block; font-weight: 500; }
+  .item .words span { color: var(--muted); font-size: 12px; line-height: 16px; }
+  .item > svg { color: var(--faint); width: 18px; height: 18px; }
+  .item .tile { width: 36px; height: 36px; border-radius: 50%; color: var(--text); }
+  .round { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); flex: none; }
   .round:hover { background: var(--danger-bg); color: var(--danger); }
   .round svg { width: 17px; height: 17px; }
   .addrow { display: flex; gap: 8px; margin: 14px 0 6px; }
-  .field { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 999px; background: var(--card); padding: 10px 16px; }
-  .field:focus { border-color: var(--brand); outline: none; }
-  .solid { background: var(--brand); color: var(--brand-ink); border-radius: 999px; padding: 10px 18px; font-weight: 600; }
-  .status { font-size: 13px; color: var(--muted); margin: 6px 6px 10px; min-height: 1.2em; }
+  .field { flex: 1; min-width: 0; height: 44px; border: 0; border-radius: 8px; background: var(--fill); padding: 0 16px;
+           font-size: 14px; box-shadow: var(--punched); }
+  .field::placeholder { color: var(--muted); }
+  .field:focus { outline: 2px solid var(--ink); outline-offset: 0; }
+  .solid { background: var(--ink); color: var(--ink-label); border-radius: 1000px; padding: 0 20px; height: 44px; font-weight: 500; font-size: 14px; }
+  .solid:hover { background: #3d3d3d; }
+  .status { font-size: 12px; line-height: 16px; color: var(--muted); margin: 6px 12px 10px; min-height: 16px; }
   .status.bad { color: var(--danger); }
-  .empty { color: var(--muted); text-align: center; padding: 26px 20px; }
-  .signin { background: var(--card); border: 1px solid var(--line); border-radius: 24px; padding: 24px; margin: 8vh auto 0; max-width: 440px; }
+  .empty { color: var(--muted); text-align: center; padding: 26px 20px; margin: 0; font-size: 14px; }
+  .signin { background: var(--card); border: 1px solid var(--line); border-radius: 24px; padding: 24px; margin: 4vh auto 0;
+            max-width: 440px; box-shadow: var(--lift); font-size: 14px; line-height: 21px; }
   .signin h1 { margin-top: 0; }
-  code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.86em; background: var(--theirs); padding: 1px 5px; border-radius: 5px; }
+  code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.86em; background: var(--fill); padding: 1px 5px; border-radius: 5px; }
 
   /* reading a write-up */
   .shade { position: fixed; inset: 0; z-index: 10; background: var(--shade); display: flex; align-items: center; justify-content: center; padding: 24px; }
@@ -164,37 +175,28 @@ PAGE = r"""<!doctype html>
            flex-direction: column; overflow: hidden; box-shadow: var(--lift); }
   .sheet header { display: flex; align-items: flex-start; gap: 12px; padding: 18px 16px 14px 24px; border-bottom: 1px solid var(--line); }
   .sheet header div { flex: 1; min-width: 0; }
-  .sheet header strong { display: block; font-size: 16px; line-height: 1.35; overflow-wrap: anywhere; }
-  .sheet header span { font-size: 12.5px; color: var(--muted); }
-  .sheet .close { width: 38px; height: 38px; border-radius: 50%; background: var(--theirs); display: grid; place-items: center; flex: none; }
-  .reading { overflow-y: auto; padding: 6px 24px 30px; font-size: 16.5px; line-height: 1.65; overflow-wrap: anywhere; }
-  .reading h1 { font-size: 25px; line-height: 1.2; margin: 20px 0 12px; }
-  .reading h2 { font-size: 18px; color: var(--text); margin: 28px 0 6px; letter-spacing: -0.01em; }
-  .reading h3 { font-size: 16px; margin: 20px 0 4px; }
+  .sheet header strong { display: block; font-size: 15px; line-height: 21px; font-weight: 600; overflow-wrap: anywhere; }
+  .sheet header span { font-size: 12px; line-height: 16px; color: var(--muted); }
+  .sheet .close { width: 40px; height: 40px; border-radius: 50%; background: var(--fill); display: grid; place-items: center; flex: none; }
+  .sheet .close:hover { background: var(--fill-2); }
+  .reading { overflow-y: auto; padding: 6px 24px 30px; font-size: 16px; line-height: 26px; overflow-wrap: anywhere; }
+  .reading h1 { font-size: 24px; line-height: 30px; margin: 20px 0 12px; }
+  .reading h2 { font-size: 18px; line-height: 24px; color: var(--text); font-weight: 600; margin: 28px 0 6px; letter-spacing: -0.01em; }
+  .reading h3 { font-size: 16px; font-weight: 600; margin: 20px 0 4px; }
   .reading p, .reading ul, .reading ol { margin: 10px 0; }
   .reading ul, .reading ol { padding-left: 22px; }
   .reading li { margin: 5px 0; }
-  .reading a { color: var(--brand); text-underline-offset: 3px; }
+  .reading a { color: var(--link); text-underline-offset: 3px; }
   .reading hr { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
-  .scroll { overflow-x: auto; margin: 14px 0; border: 1px solid var(--line); border-radius: 14px; }
-  table { border-collapse: collapse; font-size: 14.5px; line-height: 1.4; width: 100%; }
-  th, td { padding: 9px 14px; text-align: left; vertical-align: top; overflow-wrap: normal; min-width: 5.5em; border-top: 1px solid var(--line); }
-  th { font-weight: 600; background: var(--canvas); border-top: 0; }
+  .scroll { overflow-x: auto; margin: 14px 0; border-radius: 16px; background: var(--fill); }
+  table { border-collapse: collapse; font-size: 14px; line-height: 20px; width: 100%; }
+  th, td { padding: 10px 14px; text-align: left; vertical-align: top; overflow-wrap: normal; min-width: 5.5em; border-top: 1px solid var(--line); }
+  th { font-weight: 600; border-top: 0; }
 
-  /* phones: tabs move to the bottom */
-  .dock { display: none; }
   @media (max-width: 700px) {
-    .bar { padding: 12px 16px; }
-    .bar .tabs { display: none; }
-    main { padding: 4px 14px 16px; }
-    .dock { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 4; background: var(--card);
-            border-top: 1px solid var(--line); padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); }
-    .dock button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 4px;
-                   font-size: 11.5px; font-weight: 600; color: var(--muted); border-radius: 12px; }
-    .dock button[aria-current="page"] { color: var(--brand); }
-    .app { padding-bottom: calc(58px + env(safe-area-inset-bottom)); }
-    .compose { bottom: calc(58px + env(safe-area-inset-bottom)); padding: 6px 14px 10px; }
-    .bubble { max-width: 92%; }
+    main { padding: 4px 14px 12px; }
+    .compose { padding: 6px 14px 8px; }
+    .dock button { padding: 9px 14px; }
     .shade { padding: 0; align-items: stretch; }
     .sheet { border-radius: 0; max-width: none; }
     .reading { padding: 4px 18px 30px; }
@@ -217,9 +219,8 @@ PAGE = r"""<!doctype html>
 </svg>
 <div class="app">
   <header class="bar">
-    <div class="face"><b id="mono">m</b><i id="presence"></i></div>
+    <div class="face"><b id="mono">M</b><i id="presence"></i></div>
     <div class="who"><strong>Muse</strong><span id="how" aria-live="polite"></span></div>
-    <nav class="tabs" aria-label="Sections"></nav>
   </header>
   <main id="view"></main>
   <div class="compose" id="compose" hidden>
@@ -229,7 +230,7 @@ PAGE = r"""<!doctype html>
     </form>
     <p class="hint" id="asknote" aria-live="polite"></p>
   </div>
-  <nav class="dock tabs-dock" aria-label="Sections"></nav>
+  <nav class="dock" aria-label="Sections"></nav>
 </div>
 <div class="shade" id="shade" hidden><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheettitle" id="sheet"></div></div>
 <script>
@@ -273,8 +274,7 @@ picture.alt = "";
 picture.onload = () => $("mono").replaceWith(picture);
 picture.src = "/avatar.png";
 
-for (const nav of document.querySelectorAll(".tabs, .dock"))
-  nav.innerHTML = TABS.map(([go, name, sym]) => `<button data-go="${go}">${icon(sym)}<span>${name}</span></button>`).join("");
+document.querySelector(".dock").innerHTML = TABS.map(([go, name, sym]) => `<button data-go="${go}">${icon(sym)}<span>${name}</span></button>`).join("");
 
 const esc = s => String(s).replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 const sentence = s => { s = String(s || "").trim(); return s ? s.charAt(0).toUpperCase() + s.slice(1) + (/[.!?]$/.test(s) ? "" : ".") : ""; };
@@ -375,14 +375,14 @@ function jobHtml(j) {
 function drawActivity() {
   if (!canRead) return signIn("Your conversation with Muse is private on this server.");
   if (!jobs.length) {
-    return `<div class="welcome"><div class="tile">${icon("i-search")}</div><h1>Hand Muse something bigger</h1>
+    return `<div class="welcome"><h1>Hand Muse something bigger</h1>
       <p>Ask out loud or type it here. Muse looks into it for a few minutes, tells you when it's ready, and leaves the write-up in this chat.</p>
       <div class="starters">${IDEAS.slice(0, 3).map(t => `<button data-idea="${esc(t)}">${esc(t)}</button>`).join("")}</div></div>`;
   }
   let html = "", day = "";
   for (const j of jobs.slice().reverse()) {
     const d = dayOf(j.created);
-    if (d !== day) { html += `<p class="day"><span>${d}</span></p>`; day = d; }
+    if (d !== day) { html += `<p class="day">${d}</p>`; day = d; }
     html += jobHtml(j);
   }
   return html;
@@ -429,7 +429,7 @@ function closeSheet() { reading = ""; shade.hidden = true; document.body.style.o
 
 function drawBar() {
   const tab = route()[0] === "read" ? "activity" : route()[0];
-  for (const b of document.querySelectorAll("[data-go]")) if (b.closest(".tabs, .dock")) b.setAttribute("aria-current", b.dataset.go === tab ? "page" : "false");
+  for (const b of document.querySelectorAll("[data-go]")) if (b.closest(".dock")) b.setAttribute("aria-current", b.dataset.go === tab ? "page" : "false");
   let how = canRead ? "Sign in to ask and see how Muse is" : "";
   if (app) {
     const bits = [app.connected ? "Connected" : "Not connected"];

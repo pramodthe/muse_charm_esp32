@@ -2,7 +2,7 @@
 
 ## 0.9.0 (2026-11-12)
 
-- **A web app** at `/results`, replacing the results page, laid out as a chat with Muse. Chat shows each request with what Muse said and a card that opens the write-up, and takes new requests typed at the bottom; Ideas lists things to hand over and things to say out loud; Memory shows what Muse remembers and lets you add or forget notes; the top shows whether Muse is connected, its battery and timers. `companion/avatar.png`, if present, is Muse's picture.
+- **A web app** at `/results`, replacing the results page, laid out as a chat with Muse. Chat shows each request with what Muse said and a card that opens the write-up, and takes new requests typed at the bottom; Ideas lists things to hand over and things to say out loud; Memory shows what Muse remembers and lets you add or forget notes; the top shows whether Muse is connected, its battery and timers. `companion/avatar.png`, if present, is Muse's picture. The layout follows OpenMuse, and the colours, radii and type sizes the Meta Horizon OS UI Set; it is light only.
 - New server addresses for it: `/app.json`, `/ask` and `/memory`. They always need the token online.
 - The research worker is told today's date and what Muse remembers about you.
 

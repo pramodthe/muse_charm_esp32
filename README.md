@@ -267,7 +267,8 @@ that is.
 ### The web app
 
 The server has a small web app at `/results`, for the things a tiny screen is bad at. It is
-laid out as a chat with Muse:
+laid out as a chat with Muse, in the manner of [OpenMuse](https://github.com/CopilotKit/openmuse),
+with colours and sizes from the Meta Horizon OS UI Set:
 
 | | |
 | --- | --- |
