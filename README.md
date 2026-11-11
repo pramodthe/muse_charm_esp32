@@ -280,8 +280,9 @@ with colours and sizes from the Meta Horizon OS UI Set:
 | Memory | What Muse remembers about you: add a note, or forget one |
 | At the top | Whether Muse is connected, its battery, and running timers |
 
-For your own picture of Muse at the top, save it as `companion/avatar.png` (and deploy again
-if the server is online).
+For your own picture of Muse at the top, save it as `companion/avatar.webp` (it can be animated),
+`.gif`, `.png` or `.jpg`, and deploy again if the server is online. It becomes the browser
+tab's icon too.
 
 Typed messages are answered by Claude through the Anthropic API (`chat_model` in `voice.json`,
 Claude Haiku by default), with the key you added for background jobs. The voice and the typed

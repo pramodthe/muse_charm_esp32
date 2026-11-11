@@ -9,7 +9,8 @@
     POST /chat                {"text": "..."} a typed message; Muse answers (muse_chat.py)
     POST /ask                 {"task": "..."} starts a background job directly
     POST /memory              {"add": "..."} or {"forget": "..."}
-    GET  /avatar.png          your own picture for Muse, if companion/avatar.png exists
+    GET  /avatar              your own picture for Muse, if there is a companion/avatar.webp
+                              (or .gif, .png, .jpg); it is the browser tab's icon too
 
 Online, everything needs the server's token, except that MUSE_RESULTS_PUBLIC
 "true" lets anyone who has the address read the jobs (the two /results
@@ -36,6 +37,7 @@ PAGE = r"""<!doctype html>
 <meta name="color-scheme" content="light">
 <meta name="theme-color" content="#fcfcfc">
 <title>Muse</title>
+<link rel="icon" id="favicon" href="data:,">
 <style>
   /* Light only. Colours, radii and type sizes follow the Meta Horizon OS UI Set (text #272727, surfaces at
      5 % of it, #f2f2f2 bubbles, pill buttons, 14/20 and 12/16 medium text); the pale blue of your own
@@ -67,10 +69,13 @@ PAGE = r"""<!doctype html>
          padding: 14px 20px 8px; background: var(--canvas); }
   .bar::after { content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 16px; pointer-events: none;
                 background: linear-gradient(to bottom, var(--canvas), transparent); }
-  .face { position: relative; width: 56px; height: 56px; }
-  .face img, .face b { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center;
-                       background: var(--mine); color: var(--text); font-size: 24px; font-weight: 600; object-fit: cover; }
-  .face i { position: absolute; right: 1px; bottom: 1px; width: 14px; height: 14px; border-radius: 50%;
+  .face { position: relative; width: 64px; height: 64px; }
+  .face b { width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center;
+            background: var(--mine); color: var(--text); font-size: 26px; font-weight: 600; }
+  /* Your picture of Muse sits on black, the way Muse does on its own screen, in a thin pale ring */
+  .face img { display: block; width: 64px; height: 64px; border-radius: 50%; object-fit: cover; background: #000;
+              box-shadow: 0 0 0 3px var(--canvas), 0 0 0 4.5px var(--mine), 0 6px 16px rgba(39, 39, 39, 0.18); }
+  .face i { position: absolute; right: 0; bottom: 2px; width: 15px; height: 15px; border-radius: 50%;
             background: #b8b8b8; border: 2.5px solid var(--canvas); }
   .face i.on { background: var(--ok); }
   .who { text-align: center; }
@@ -272,11 +277,12 @@ const view = $("view"), compose = $("compose"), task = $("task"), shade = $("sha
 let jobs = [], messages = [], app = null, canRead = true, drawn = "", lastCount = -1, notice = "", reading = "";
 let pending = "";   // a typed message Muse is still answering
 
-// Your own picture for Muse, if the server has one (companion/avatar.png).
+// Your own picture for Muse, if the server has one (companion/avatar.webp, .gif, .png or .jpg).
+// It is the tab's icon too (browsers show the first frame of an animated one).
 const picture = new Image();
 picture.alt = "";
-picture.onload = () => $("mono").replaceWith(picture);
-picture.src = "/avatar.png";
+picture.onload = () => { $("mono").replaceWith(picture); $("favicon").href = "/avatar"; };
+picture.src = "/avatar";
 
 document.querySelector(".dock").innerHTML = TABS.map(([go, name, sym]) => `<button data-go="${go}">${icon(sym)}<span>${name}</span></button>`).join("");
 

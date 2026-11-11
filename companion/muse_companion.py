@@ -609,14 +609,19 @@ async def handle(hub, reader, writer):
             respond(writer, "200 OK", json.dumps(result).encode())
             return
 
-        if method == "GET" and path == "/avatar.png":
-            # Your own picture for Muse in the web app, if you have put one next to this file.
-            try:
-                with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "avatar.png"), "rb") as f:
-                    picture = f.read(2 * 1024 * 1024)
-                respond(writer, "200 OK", picture, "image/png")
-            except OSError:
-                respond(writer, "404 Not Found")
+        if method == "GET" and path in ("/avatar", "/avatar.png"):
+            # Your own picture for Muse in the web app, if you have put one next to this file:
+            # avatar.webp (it may be animated), avatar.gif, avatar.png or avatar.jpg.
+            here = os.path.dirname(os.path.abspath(__file__))
+            for name, kind in (("avatar.webp", "image/webp"), ("avatar.gif", "image/gif"),
+                               ("avatar.png", "image/png"), ("avatar.jpg", "image/jpeg")):
+                try:
+                    with open(os.path.join(here, name), "rb") as f:
+                        respond(writer, "200 OK", f.read(2 * 1024 * 1024), kind)
+                    return
+                except OSError:
+                    pass
+            respond(writer, "404 Not Found")
             return
 
         if method == "GET" and path == "/results":
