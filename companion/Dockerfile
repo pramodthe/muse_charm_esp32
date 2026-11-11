@@ -7,12 +7,14 @@
 #   PORT               the port to listen on, if the host chooses it (default 8765)
 #   MUSE_TZ            your time zone, for example Australia/Sydney (default UTC)
 #   MUSE_DATA_DIR      a folder that survives restarts, for what Muse remembers
+#   ANTHROPIC_API_KEY  for background jobs (research); without it Muse says it can't
 #
 #   docker build -t muse-companion companion && docker run -p 8765:8765 \
 #       -e DEEPGRAM_API_KEY=... -e MUSE_TOKEN=... muse-companion
 FROM python:3.12-slim
 WORKDIR /app
-RUN pip install --no-cache-dir tzdata
-COPY muse_companion.py muse_voice.py muse_ws.py muse_online.py muse_world.py ./
+RUN pip install --no-cache-dir tzdata deepagents langchain-anthropic
+COPY muse_companion.py muse_voice.py muse_ws.py muse_online.py muse_world.py \
+     muse_jobs.py muse_worker.py muse_results.py ./
 EXPOSE 8765
 CMD ["python3", "-u", "muse_companion.py"]

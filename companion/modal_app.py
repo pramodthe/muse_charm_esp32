@@ -8,7 +8,10 @@ One small container runs muse_companion.py in online mode. Modal gives it an
 https address and passes websockets through; the Deepgram key and the token
 Muse must present come from the Modal secret "muse-companion". The container
 runs while Muse is connected and stops a few minutes after it disconnects.
-What Muse is asked to remember lives on the Modal volume "muse-companion-data".
+What Muse is asked to remember, and what its background jobs write, live on
+the Modal volume "muse-companion-data". The image also holds the packages the
+background worker needs (muse_worker.py); it works once the secret has an
+ANTHROPIC_API_KEY.
 The time zone is taken from the computer that deploys this.
 """
 
@@ -31,7 +34,8 @@ def local_timezone():
 
 
 app = modal.App("muse-companion")
-image = modal.Image.debian_slim(python_version="3.12").pip_install("tzdata").add_local_dir(
+image = modal.Image.debian_slim(python_version="3.12").pip_install(
+    "tzdata", "deepagents", "langchain-anthropic").add_local_dir(
     HERE, "/app", ignore=["__pycache__", "*.pyc", "*.wav"])
 data = modal.Volume.from_name("muse-companion-data", create_if_missing=True)
 
@@ -39,7 +43,7 @@ data = modal.Volume.from_name("muse-companion-data", create_if_missing=True)
 @app.function(
     image=image,
     secrets=[
-        modal.Secret.from_name("muse-companion"),  # DEEPGRAM_API_KEY and MUSE_TOKEN
+        modal.Secret.from_name("muse-companion"),  # DEEPGRAM_API_KEY, MUSE_TOKEN, ANTHROPIC_API_KEY
         modal.Secret.from_dict({"MUSE_TZ": local_timezone(), "MUSE_DATA_DIR": "/data"}),
     ],
     volumes={"/data": data},

@@ -6,14 +6,14 @@ computer.
     python3 companion/deploy_modal.py
     python3 companion/deploy_modal.py --code-only    after changing only the server's code
 
-Run it yourself, once (and again after changing your Deepgram key or voice
-options). It needs a Modal account you are logged in to (`modal setup`)
-and your Deepgram key in ~/.config/muse/deepgram_key. It:
+Run it yourself, once (and again after changing a key or your voice options).
+It needs a Modal account you are logged in to (`modal setup`) and your
+Deepgram key in ~/.config/muse/deepgram_key. An Anthropic key in
+~/.config/muse/anthropic_key goes along too, for background jobs. It:
 
   1. makes a random token (the password Muse and the Claude Code hooks present)
      and saves it in ~/.config/muse/server.json,
-  2. stores your Deepgram key and that token in Modal as the secret
-     "muse-companion",
+  2. stores your keys and that token in Modal as the secret "muse-companion",
   3. deploys modal_app.py, and saves the address Modal gives it.
 
 Afterwards: `python3 companion/muse_companion.py pair` tells Muse the address,
@@ -28,6 +28,7 @@ import sys
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import muse_jobs    # noqa: E402
 import muse_online  # noqa: E402
 import muse_voice   # noqa: E402
 
@@ -53,15 +54,22 @@ def main():
         sys.exit(problem)
     token = muse_online.token()
 
-    print("Storing the Deepgram key and Muse's token in Modal (secret \"muse-companion\")...")
+    worker_key = muse_jobs.anthropic_key()
+    print("Storing the Deepgram key%s and Muse's token in Modal (secret \"muse-companion\")..."
+          % (", the Anthropic key" if worker_key else ""))
     values = ["DEEPGRAM_API_KEY=" + key, "MUSE_TOKEN=" + token]
+    if worker_key:
+        values.append("ANTHROPIC_API_KEY=" + worker_key)
+    else:
+        print("  (no Anthropic key in %s: Muse will not be able to do background jobs)" % muse_jobs.KEY_FILE)
     if os.path.exists(muse_voice.OPTIONS_FILE):  # your voice, model and personality choices go along
         with open(muse_voice.OPTIONS_FILE) as f:
             values.append("MUSE_VOICE=" + " ".join(f.read().split()))
     done = subprocess.run(modal + ["secret", "create", "--force", "muse-companion"] + values,
                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     if done.returncode != 0:
-        sys.exit("Modal did not take the secret:\n" + done.stdout.replace(key, "<key>").replace(token, "<token>"))
+        said = done.stdout.replace(key, "<key>").replace(token, "<token>")
+        sys.exit("Modal did not take the secret:\n" + (said.replace(worker_key, "<key>") if worker_key else said))
 
     deploy(modal)
 
@@ -93,7 +101,7 @@ def deploy(modal):
         print("  " + line.rstrip())
     if run.wait() != 0:
         sys.exit("The deployment failed; see the messages above. The version that was running carries on, "
-                 "and takes Muse back within two minutes.")
+                 "and takes Muse back within five minutes.")
     found = re.findall(r"https://[\w.-]+\.modal\.run", output)
     if not found:
         sys.exit("Deployed, but I could not find the server's address in Modal's output. Save it yourself as "

@@ -18,6 +18,8 @@ Deepgram key stays on this computer (~/.config/muse/deepgram_key).
                                        through a running server
     python3 muse_companion.py pair     run the server and tell the Muse that
                                        connects where the online server is
+    python3 muse_companion.py results  open the page with what Muse's
+                                       background jobs wrote (muse_jobs.py)
     curl http://127.0.0.1:8765/        what the server sees right now
 
 Online: the same server can run on a host on the internet, so Muse works
@@ -41,9 +43,12 @@ import os
 import socket
 import sys
 import time
+import urllib.parse
 import urllib.request
 
+import muse_jobs
 import muse_online
+import muse_results
 import muse_voice
 import muse_world
 import muse_ws as ws
@@ -56,7 +61,7 @@ THINKING_STALE_S = 5 * 60   # "thinking" with no news this long: Claude was inte
 OOPS_EVERY_S = 10           # at most one "that failed" reaction per session this often
 CAPTION_MAX = 28            # characters that fit under Muse on one line
 MAX_HOOK_BYTES = 32 * 1024 * 1024
-RETIRE_S = 120              # online: how long a retiring server turns Muse away
+RETIRE_S = 300              # online: how long a retiring server turns Muse away (a deploy can take minutes)
 
 # Moods last until the next event; events are one-off reactions.
 MOOD_PRIORITY = {"needs_you": 3, "working": 2, "thinking": 1, "idle": 0}
@@ -147,6 +152,7 @@ class Hub:
         self.timers = muse_world.Timers(self.alert)
         self.missed = []      # alerts that came up while no Muse was connected
         self.battery_told = 100   # the battery level Muse last warned about (100: not yet)
+        self.jobs = muse_jobs.Jobs(self.on_job_done)   # background work (muse_worker.py)
         self.retired_until = 0.0  # online: a new version is taking over; turn devices away until then
         self.sent = None      # last mood message, re-sent to new devices
 
@@ -259,6 +265,18 @@ class Hub:
         if not self.devices:
             self.missed = (self.missed + [text])[-3:]
 
+    def on_job_done(self, job):
+        """A background job has finished: Muse says so, with the answer in a sentence."""
+        if job.get("status") == "done":
+            line = "I'm done! " + (job.get("summary") or "The write-up on %s is on your results page." % job["title"])
+            sign, moves = "Ready!", ["cheer"]
+        else:
+            line, sign, moves = "Sorry, I couldn't finish looking into %s." % job["title"], "Oops", ["shake_head"]
+        for link in list(self.devices.values()):
+            link.voice.announce(text=line, moves=moves, sign=sign, secs=15, alert=sign)
+        if not self.devices:
+            self.missed = (self.missed + [sign])[-3:]
+
     def on_status(self, link):
         """Muse reported how it is doing: say so when its battery runs low
         (once at low and once when nearly empty, and not at night)."""
@@ -333,6 +351,7 @@ class Hub:
             "devices": [link.peer for link in self.devices.values()],
             "muse": [link.status_report() for link in self.devices.values() if link.status],
             "timers": self.timers.list()["timers"],
+            "jobs": [self.jobs.brief(j) for j in self.jobs.list()[:5]],
             "voice": muse_voice.key_status()[1] or "ready",
             "showing": self.sent,
             "sessions": [
@@ -524,6 +543,23 @@ async def handle(hub, reader, writer):
             await hub.serve_device(reader, writer, peer)
             return
 
+        if method == "GET" and path == "/results":
+            respond(writer, "200 OK", muse_results.PAGE.encode(), "text/html; charset=utf-8")
+            return
+        if method == "GET" and path.startswith("/results") and path.endswith(".json"):
+            if hub.token and not authorized(hub, headers):
+                respond(writer, "401 Unauthorized")
+                return
+            if path == "/results.json":
+                found = {"jobs": [hub.jobs.brief(j) for j in hub.jobs.list()]}
+            else:
+                found = hub.jobs.get(path[len("/results/"):-len(".json")])
+            if found is None:
+                respond(writer, "404 Not Found")
+            else:
+                respond(writer, "200 OK", json.dumps(found).encode())
+            return
+
         if method == "GET" and path == "/":
             status = hub.status() if not hub.token or authorized(hub, headers) else {"server": "muse companion"}
             respond(writer, "200 OK", json.dumps(status, indent=2).encode() + b"\n")
@@ -665,15 +701,32 @@ def demo(port, online):
                 e, "" if online else "; start it with: python3 muse_companion.py"))
 
 
+def open_results(port):
+    """Open the page with what Muse's background jobs wrote, signed in."""
+    import webbrowser
+    saved = muse_online.load()
+    if saved.get("url"):
+        page = muse_online.http_url(saved["url"], "/results")
+        # After the "#": browsers keep that part to themselves, and the page stores it.
+        webbrowser.open(page + "#" + urllib.parse.quote(saved.get("token", ""), safe=""))
+    else:
+        page = "http://127.0.0.1:%d/results" % port
+        webbrowser.open(page)
+    print("Opened %s in your browser. It stays signed in there; bookmark it." % page)
+
+
 def main():
     ap = argparse.ArgumentParser(description="Muse companion server for Claude Code and voice chat")
-    ap.add_argument("command", nargs="?", default="serve", choices=["serve", "demo", "pair"])
+    ap.add_argument("command", nargs="?", default="serve", choices=["serve", "demo", "pair", "results"])
     ap.add_argument("--port", type=int, default=int(os.environ.get("PORT") or PORT))
     ap.add_argument("--online", action="store_true", help="demo: play it through the online server")
     ap.add_argument("--forget", action="store_true", help="pair: make Muse forget the online server")
     args = ap.parse_args()
     if args.command == "demo":
         demo(args.port, args.online)
+        return
+    if args.command == "results":
+        open_results(args.port)
         return
     pair = None
     if args.command == "pair":

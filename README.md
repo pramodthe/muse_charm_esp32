@@ -44,6 +44,7 @@ when Claude needs your OK and cheers when the reply is done.
 | Use Claude Code | Shows what Claude is doing, comes up to the glass and waves when it needs you, cheers when it's done |
 | Nothing | Breathes, blinks and glances around; now and then peeks at you up close, looks around, wiggles or stretches |
 | Nothing for 3 minutes | Dozes off: eyes closed, "z z Z", the screen dimmed. Touch it, pick it up or press BOOT to wake it |
+| Ask for something bigger: "research the best budget 3D printers" | Says it's on it, works in the background for a few minutes, then tells you the answer in a sentence; the write-up is on a web page |
 | Set a timer, run its battery down, pick it up in the morning | Speaks first: "Time's up! Tea.", "I'm getting sleepy, could you plug me in?", a good morning |
 
 The AI has Muse's body and screen as tools, so you can just ask: "dance for me", "come closer",
@@ -153,7 +154,8 @@ allowance):
    python3 companion/deploy_modal.py
    ```
 
-   It makes the token, stores the token and your Deepgram key in Modal as the secret
+   It makes the token, stores the token and your Deepgram key (and your Anthropic key, if you
+   have saved one for [background jobs](#background-jobs)) in Modal as the secret
    `muse-companion`, deploys `companion/modal_app.py` and saves the server's address and the
    token in `~/.config/muse/server.json` on your computer. Run it again after changing the
    server's code, your key or your voice options.
@@ -213,6 +215,7 @@ firmware performs them (`perform()` in `firmware/main/behavior.c`):
 | `timer` | Sets, lists or cancels timers; when one is up Muse says so, waves and shows its label | "Set a timer for five minutes for tea" |
 | `remember`, `forget` | Keeps short notes about you between conversations, and drops them again | "Remember my name is Sam", "forget everything" |
 | `claude_status` | Reads what your Claude Code sessions are doing | "What is Claude doing?" |
+| `work_on`, `work_status` | Hands research to a background job that searches the web and writes up what it finds; says how jobs are going and what they found | "Research the best budget 3D printers", "what did you find?" |
 
 Muse reports its sensors to the server at the start of each conversation and once a minute
 (`power.c` reads the board's AXP2101 for the battery). The server side of the other tools is in
@@ -224,6 +227,47 @@ Muse also uses the moves by itself to show feelings while it talks. To add a mov
 `MOVES` in `muse_voice.py`, to `muse_move_t` in `muse.h` and the name table in `agent.c`, and
 play it in `perform()`.
 
+### Background jobs
+
+A spoken reply has to come within a second or two, which is too short to look anything up. So
+bigger requests are handed off:
+
+```
+you: "research the best budget 3D printers"
+  └─ the voice AI calls work_on ──> muse_jobs.py starts muse_worker.py, its own process
+Muse: "On it! I'll tell you when it's ready."          │  a Deep Agent: plans, searches the
+        ... Muse goes back to its day ...               │  web, reads, writes it up (minutes)
+Muse: "I'm done! The ... is the best pick because ..." <┘  the summary, spoken first
+you:  read the write-up at /results
+```
+
+The worker is a [Deep Agent](https://github.com/langchain-ai/deepagents) running Claude with
+Anthropic's web search. It keeps its notes in memory only, and cannot run commands or touch
+files on the server. Each job is stopped after 12 minutes, two can run at once, and the last 30
+are kept.
+
+To set it up:
+
+1. Create an [Anthropic API key](https://console.anthropic.com) and save it where the server
+   looks for it (zsh; the paste is hidden):
+
+   ```sh
+   mkdir -p ~/.config/muse
+   read -rs 'k?Paste your Anthropic key: ' && print -rn -- "$k" > ~/.config/muse/anthropic_key && unset k
+   chmod 600 ~/.config/muse/anthropic_key
+   ```
+
+2. Online: run `python3 companion/deploy_modal.py` again, which hands the key to Modal with the
+   others. On your computer: nothing more if [uv](https://docs.astral.sh/uv/) is installed (it
+   fetches the worker's packages on the first job); otherwise
+   `pip install deepagents langchain-anthropic` for a Python 3.11 or later and name it in
+   `MUSE_WORKER_PYTHON`.
+3. Read the results: `python3 companion/muse_companion.py results` opens the page in your
+   browser, signed in. Bookmark it; it works on your phone too once you paste the token there.
+
+A research job uses far more of the model than a spoken reply, and it is billed to your
+Anthropic account. `worker_model` in `voice.json` chooses the model.
+
 ### Muse speaks first
 
 Muse does not only answer. It wakes up, comes close and says something by itself when:
@@ -231,6 +275,7 @@ Muse does not only answer. It wakes up, comes close and says something by itself
 | When | Muse |
 | --- | --- |
 | A timer is up | "Time's up! Tea.", with a wave and the label as a sign |
+| A background job is finished | "I'm done!" and the answer in a sentence, with a cheer |
 | Its battery falls to 20 %, and again at 10 % | Asks to be plugged in, with the level as a sign. Not between 10 pm and 8 am |
 | You pick it up, wake it or switch it on for the first time in a morning (5 to 11 am) | Says good morning in its own words, and waves |
 
@@ -302,6 +347,7 @@ To change the voice, the model or Muse's personality, create `~/.config/muse/voi
 | `prompt` | a short, playful Muse | Muse's personality |
 | `timezone` | the server's own | An IANA name such as `Australia/Sydney`, for the time tool |
 | `speak_first` | `true` | `false`: Muse only speaks when spoken to (see [Muse speaks first](#muse-speaks-first)) |
+| `worker_model` | `anthropic:claude-sonnet-5-5` | The model for [background jobs](#background-jobs), as Deep Agents names it |
 
 To test voice chat without Muse, `python3 companion/test_voice.py "Hello Muse!"` plays Muse's part
 from your computer (macOS `say`, or `--wav file.wav`) and saves the spoken reply to `reply.wav`.
@@ -419,6 +465,9 @@ companion/             runs on your computer
   muse_companion.py    the server: Claude Code hooks, moods, Muse's connection
   muse_voice.py        voice chat relay to the Deepgram Voice Agent API
   muse_world.py        the AI's time, timers, memory and view of Muse's sensors
+  muse_jobs.py         background jobs: starts them, keeps their results
+  muse_worker.py       one job: a Deep Agent that researches and writes up
+  muse_results.py      the page where you read the write-ups
   muse_ws.py           small websocket implementation
   install_hooks.py     adds or removes the Claude Code hooks
   test_voice.py        tests voice chat without Muse

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.0 (2026-11-11)
+
+- **Background jobs.** Ask Muse for something bigger ("research the best budget 3D printers") and it says it is on it, a worker searches the web and writes up what it finds, and a few minutes later Muse tells you the answer in a sentence. The AI's new tools are `work_on` and `work_status`.
+- The worker (`muse_worker.py`) is a [Deep Agent](https://github.com/langchain-ai/deepagents) running Claude with Anthropic's web search, started by `muse_jobs.py` as its own process. It needs an Anthropic API key (`~/.config/muse/anthropic_key`); `deploy_modal.py` hands it to Modal with the others.
+- **A results page** at `/results` on the server for reading the write-ups; `muse_companion.py results` opens it signed in.
+- A redeploy now turns Muse away from the old version for five minutes, since building the image with the worker's packages takes longer.
+
 ## 0.7.0 (2026-11-11)
 
 - **Muse speaks first.** When a timer is up it says so ("Time's up! Tea."), waves and shows the label; when its battery falls to 20 % and to 10 % it asks to be plugged in (not at night); and the first time you pick it up in a morning it says good morning in its own words. Muse wakes, comes close and speaks, and holding BOOT answers it. `"speak_first": false` in `voice.json` turns it off.

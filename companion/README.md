@@ -10,6 +10,8 @@ A small Python program that runs on your computer, next to Muse. It does two job
   each event here, and Muse shows what Claude is doing.
 
 It uses the Python standard library only (Python 3.8 or later); there is nothing to install.
+The one exception is the optional background worker, which needs `deepagents` and
+`langchain-anthropic` (see [Background jobs](#background-jobs)).
 
 ## How it works
 
@@ -25,6 +27,9 @@ Claude Code ──hooks (curl)──> muse_companion.py <──websocket──> 
 | `muse_companion.py` | The server: Claude Code hooks on `127.0.0.1:8765/hook`, Muse's websocket on `:8765/device`, the UDP beacon on port 47800, a status page on `:8765/` |
 | `muse_voice.py` | Voice chat: relays audio between Muse and Deepgram, raises the voice's pitch, sends subtitles and gestures |
 | `muse_world.py` | The AI's time, timers, memory and its view of Muse's sensors |
+| `muse_jobs.py` | Background jobs: starts `muse_worker.py`, keeps the results, tells Muse when one is done |
+| `muse_worker.py` | One job, in its own process: a Deep Agent that searches the web and writes up what it finds |
+| `muse_results.py` | The `/results` page for reading the write-ups |
 | `muse_ws.py` | A small websocket implementation (server and client) |
 | `install_hooks.py` | Adds or removes the Claude Code hooks |
 | `test_voice.py` | Plays Muse's part from your computer, to test voice chat without Muse |
@@ -95,14 +100,14 @@ online mode (the `MUSE_TOKEN` environment variable is set):
   the status page shows nothing but the server's name.
 - No beacon. Muse learns the address and token from a local server run as
   `muse_companion.py pair`, and keeps them in its own storage.
-- The Deepgram key comes from `DEEPGRAM_API_KEY`, and voice options from `MUSE_VOICE` (the same
-  JSON as `voice.json`). `MUSE_TZ` sets the time zone and `MUSE_DATA_DIR` the folder for what
+- The Deepgram key comes from `DEEPGRAM_API_KEY`, the Anthropic key for background jobs from
+  `ANTHROPIC_API_KEY`, and voice options from `MUSE_VOICE` (the same JSON as `voice.json`). `MUSE_TZ` sets the time zone and `MUSE_DATA_DIR` the folder for what
   Muse remembers; `modal_app.py` sets both (your computer's time zone, and a Modal volume).
 - The hooks run `muse_hook.py`, which strips each event down to what Muse shows before anything
   leaves your computer, and sends it in the background.
 - After changing the server's code, `python3 companion/deploy_modal.py --code-only` deploys it
   again. Modal keeps the old version running for as long as Muse stays connected to it, so the
-  script first asks the old one (`POST /retire`) to let Muse go and turn it away for two minutes;
+  script first asks the old one (`POST /retire`) to let Muse go and turn it away for five minutes;
   Muse reconnects by itself and lands on the new version.
 
 ## Voice options
@@ -131,6 +136,30 @@ The AI's tools are declared in `TOOLS` and carried out in `_function()` in `muse
   `memory.json` in `~/.config/muse` (or `MUSE_DATA_DIR`) and added to the prompt when a
   conversation starts.
 - `claude_status`: what your Claude Code sessions are doing.
+- `work_on` and `work_status`: background jobs, below.
+
+## Background jobs
+
+`work_on` calls `Jobs.start()` in `muse_jobs.py`. The job is written to
+`jobs/<id>.json` in `~/.config/muse` (or `MUSE_DATA_DIR`) and `muse_worker.py` is started on it
+as a separate process, so the server keeps answering Muse and stays free of the worker's
+packages. The worker builds a [Deep Agent](https://github.com/langchain-ai/deepagents) with
+Anthropic's web search tool and an in-memory `StateBackend` (no shell, no real files), and writes
+`status`, `summary` and `report` back into the job file. When the process ends, `Hub.on_job_done()`
+has Muse announce the summary (see [Speaking first](#speaking-first)).
+
+| | |
+| --- | --- |
+| Key | `~/.config/muse/anthropic_key`, or `ANTHROPIC_API_KEY` |
+| Python for the worker | This one if it has `deepagents`; otherwise `uv run --with deepagents --with langchain-anthropic`; or the one named in `MUSE_WORKER_PYTHON` |
+| Limits | 12 minutes a job, 2 at once, 8 web searches a job, the newest 30 kept |
+| Model | `worker_model` in `voice.json` (default `anthropic:claude-sonnet-5-5`) |
+| Testing | `MUSE_WORKER_FAKE=1` makes the worker return a canned result without a model |
+
+The write-ups are read at `/results` on the server (`muse_companion.py results` opens it). The
+page itself holds no data; it fetches `/results.json` and `/results/<id>.json`, which need the
+token online. The command passes the token after the `#` of the address, which browsers do not
+send to servers, and the page keeps it in the browser's storage.
 
 ## Speaking first
 
@@ -144,6 +173,7 @@ microphone audio.
 | Trigger | From | Says |
 | --- | --- | --- |
 | A timer is up | `Hub.alert()` | `timer_line()`: "Time's up! Tea." |
+| A background job ends | `Hub.on_job_done()` | "I'm done!" and the job's summary, or that it could not finish |
 | `status` reports a battery at or under 20 %, then 10 %, not charging | `Hub.on_status()` | `battery_line()`; not between 10 pm and 8 am |
 | Muse sends `{"type":"awake"}` (picked up, woken by touch, switched on) | `Hub.on_awake()` | The AI's own good morning, once a day between 5 and 11 am (`state.json` remembers the day) |
 

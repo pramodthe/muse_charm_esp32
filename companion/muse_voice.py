@@ -25,8 +25,9 @@ words (InjectUserMessage). "speak_first": false in voice.json turns this off.
 The AI has Muse's body and screen as tools (see TOOLS below): muse_do performs
 moves, muse_show puts up a sign, muse_set changes brightness and volume,
 muse_status reads Muse's own sensors, time_now, timer, remember and forget
-(muse_world.py) give it the time, timers and a memory, and claude_status
-reports what Claude Code is doing.
+(muse_world.py) give it the time, timers and a memory, claude_status reports
+what Claude Code is doing, and work_on hands bigger work (web research and a
+write-up) to a background job (muse_jobs.py); work_status says how that went.
 
 Muse's voice is the Deepgram voice raised in pitch (and a little faster), so
 it sounds like the same small creature that chirps.
@@ -68,6 +69,7 @@ DEFAULTS = {
     "pitch": 1.18,            # 1 = Deepgram's voice unchanged
     "timezone": "",           # an IANA name such as Australia/Sydney; empty: the server's own
     "speak_first": True,      # timers, a low battery and "good morning" are said aloud
+    "worker_model": "anthropic:claude-sonnet-5-5",   # the model that does background jobs
     "listen_model": "nova-3",
     "think_provider": "anthropic",
     "think_model": "claude-haiku-4-5",
@@ -87,6 +89,11 @@ DEFAULTS = {
         "noisy the room is, and time_now for the time or date; never guess those. Use timer when "
         "asked to time or remind, and remember when the user tells you something about themselves "
         "worth keeping, such as their name or what they like. "
+        "You cannot look things up yourself. When the user wants research, a comparison, options to "
+        "choose from, or anything that needs current information from the web, call work_on with a "
+        "complete, self-contained task and tell them you are on it and will say when it is ready; it "
+        "takes a few minutes in the background. Call work_status when they ask how that is going or "
+        "what you found, and answer from its summary in a sentence or two. "
         "Claude Code, an AI coding assistant, often works on the same computer; if the user asks what "
         "Claude is doing or how their work is going, call claude_status and answer in a sentence."
     ),
@@ -187,6 +194,28 @@ TOOLS = [
         "name": "forget",
         "description": "Drop remembered notes that mention a word or phrase; \"everything\" drops them all.",
         "parameters": {"type": "object", "properties": {"about": {"type": "string"}}, "required": ["about"]},
+    },
+    {
+        "name": "work_on",
+        "description": "Hand a bigger job to your background worker, which can search and read the web "
+                       "for a few minutes and writes up what it finds. Use it for research, comparisons, "
+                       "recommendations and current facts. It returns at once; you tell the user you are "
+                       "on it, and you will announce the result yourself when it is ready.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task": {"type": "string", "description": "The whole job in full sentences, with everything the "
+                                                          "worker needs to know (it cannot ask questions)."},
+                "title": {"type": "string", "description": "A few words naming the job, such as 'Budget 3D printers'."},
+            },
+            "required": ["task", "title"],
+        },
+    },
+    {
+        "name": "work_status",
+        "description": "How your background jobs are going and what they found: each recent job's title, "
+                       "whether it is running, done or failed, its summary, and the start of the newest write-up.",
+        "parameters": {"type": "object", "properties": {}},
     },
     {
         "name": "claude_status",
@@ -693,6 +722,13 @@ class Voice:
             result = muse_world.forget(args.get("about") or "")
             log("voice: forget ->", result)
             content = json.dumps(result)
+        elif name == "work_on":
+            result = self.link.hub.jobs.start(args.get("task"), args.get("title"), options()["worker_model"])
+            log("voice: work_on ->", result)
+            content = json.dumps(result)
+        elif name == "work_status":
+            content = json.dumps(self.link.hub.jobs.for_ai())
+            log("voice: work_status ->", content[:200])
         elif name == "claude_status":
             content = self.claude_status()
             log("voice: claude_status ->", content)
