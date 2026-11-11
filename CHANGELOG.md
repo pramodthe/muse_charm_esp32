@@ -1,13 +1,16 @@
 # Changelog
 
-## 0.4.0 (unreleased)
+## 0.4.0 (2026-11-11)
 
-- Talk by holding the BOOT button on the side, so the screen stays free for touching Muse. Holding the screen squeezes Muse; holding it 5 s opens setup.
-- Voice and character feel like one: Muse chirps "mm?" when it starts listening and hums while it thinks, speaks with the Deepgram voice raised in pitch, sways with each syllable, gestures a moment into the reply, and settles with a happy look. The caption line shows "Listening...", what it heard, and the reply as subtitles timed to the audio.
-- WiFi stays in modem sleep during voice chat (turning power saving off dipped the supply on this board) with bigger TCP windows; the panel's settings are rewritten every few seconds so a dip can no longer leave the screen black.
-
-- Voice chat moved to the companion server: Muse streams audio to your computer, which holds the Deepgram key and talks to the Deepgram Voice Agent API. No key to type on Muse; the on-screen key page and the voice fields on the phone page are gone, and keys saved by 0.3.0 are erased from the board. Default LLM is Claude Haiku 4.5 through Deepgram; voice, model and personality are set in `~/.config/muse/voice.json`. Ask Muse what Claude is doing.
-- Claude Code companion: Muse shows what Claude Code is doing on your computer (thinking, running a tool, waiting for your permission, done), with a caption under Muse. `companion/muse_companion.py` receives Claude Code's hooks and `companion/install_hooks.py` adds them. Muse finds the server with a UDP beacon.
+- **Companion server** (`companion/`, Python standard library only) on your computer. Muse finds it on the local network with a UDP beacon and keeps one websocket open to it.
+- **Claude Code companion:** Muse shows what Claude Code is doing (thinking, running a tool, waiting for your permission, done) with a caption under Muse, waves when Claude needs you and cheers when it's done. `install_hooks.py` adds the hooks to `~/.claude/settings.json`.
+- **Voice chat moved to the server:** Muse streams audio to your computer, which holds the Deepgram key and talks to the Deepgram Voice Agent API. Nothing to type on Muse but the WiFi password; keys saved on the board by 0.3.0 are erased. Claude Haiku 4.5 through Deepgram by default; voice, pitch, model and personality are set in `~/.config/muse/voice.json`. Ask Muse what Claude is doing.
+- **Push to talk on the BOOT button**, so the screen stays free for touching Muse. Holding the screen squeezes Muse; holding it 5 s opens setup.
+- **Voice and character feel like one:** Muse chirps "mm?" when it starts listening and hums while it thinks, speaks with the Deepgram voice raised in pitch, sways with each syllable, gestures a moment into the reply and settles with a happy look. The caption shows "Listening...", what it heard, and the reply as subtitles timed to the audio.
+- `test_voice.py` tests voice chat without Muse; `muse_companion.py demo` plays a made-up Claude Code session.
+- Steadier power: WiFi stays in modem sleep during voice chat (turning power saving off dipped the supply on this board) with bigger TCP windows, and the panel's settings are written again every few seconds so the screen recovers from a dip.
+- A saved WiFi network that is in range but fails to join gets a second try before setup opens.
+- MIT license for the code.
 
 ## 0.3.0 (2026-11-11)
 

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 // WiFi: saved networks, auto-reconnect and the "Muse-setup" portal.
-// Adapted from net_prov in esp32-agui (multi-SSID connect, backoff reconnect,
-// low-latency power-save switching).
+// Adapted from net_prov in esp32-agui (multi-SSID connect, backoff reconnect).
+// WiFi stays in modem sleep: turning power saving off draws more current, and
+// on this board that dipped the supply.
 
 #include "wifi.h"
 
@@ -369,8 +370,3 @@ bool wifi_current_ssid(char *buf, size_t len)
     return true;
 }
 
-void wifi_low_latency(bool on)
-{
-    // Modem sleep adds ~100 ms per round trip, which throttles audio upload (see esp32-agui).
-    esp_wifi_set_ps(on ? WIFI_PS_NONE : WIFI_PS_MIN_MODEM);
-}

@@ -1,12 +1,14 @@
 # Muse charm for the ESP32-S3-Touch-AMOLED-1.8
 
-An interactive 3D mascot for the [Waveshare ESP32-S3-Touch-AMOLED-1.8](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.8).
-Hold its side button and talk to it: Muse listens, thinks and answers out loud in its own little
-voice, swaying as it speaks with the words running underneath (through a small server on your computer and the
-[Deepgram Voice Agent API](https://developers.deepgram.com/docs/voice-agent)). It also waves when you tap it, giggles when you tap its belly, follows your
-finger with its eyes, leans against the tilt of the board and gets dizzy when shaken. As a
-[Claude Code companion](companion/README.md) it sits by your keyboard and shows what Claude Code
-is doing: thinking, editing a file, waiting for your OK, or done.
+An interactive 3D mascot for the
+[Waveshare ESP32-S3-Touch-AMOLED-1.8](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.8).
+Muse lives on the little AMOLED screen: it waves when you tap it, giggles when you tap its belly,
+follows your finger with its eyes, leans against the tilt of the board and gets dizzy when shaken.
+
+Hold the side button and talk to it, and Muse answers out loud in its own small voice, swaying as
+it speaks with subtitles underneath. Next to your keyboard it doubles as a **Claude Code
+companion**: it glances up while Claude thinks, reads "Editing face.c" while Claude works, waves
+when Claude needs your OK and cheers when the reply is done.
 
 > **A fun, non-commercial learning project.** I built this to learn 3D modelling, animation and
 > embedded graphics by recreating something I liked: Meta's Muse Charm mascot, on a small dev board.
@@ -24,9 +26,9 @@ is doing: thinking, editing a file, waiting for your OK, or done.
 
 ## What it does
 
-| Input | Muse |
+| You | Muse |
 | --- | --- |
-| Hold the BOOT button and talk | Chirps "mm?", tilts its head and listens, hums while it thinks, then answers out loud with subtitles underneath. Press BOOT again to interrupt |
+| Hold the **BOOT** button and talk | Chirps "mm?", tilts its head and listens, hums while it thinks, then answers out loud with subtitles underneath. Press BOOT again to interrupt |
 | Drag a finger | Eyes follow your finger |
 | Tap | Waves and chirps "hi!" |
 | Tap the belly | Giggles |
@@ -35,65 +37,32 @@ is doing: thinking, editing a file, waiting for your OK, or done.
 | Swipe left or right | Gets brushed aside and glances that way |
 | Tilt the board | Stays upright by leaning against the tilt, eyes look downhill |
 | Shake | Gets dizzy |
+| Use Claude Code | Shows what Claude is doing, waves when it needs you, cheers when it's done |
 | Nothing | Breathes, blinks and glances around |
 
-While it answers, the AI can make Muse wave, giggle, cheer or go dizzy. Without voice chat (no
-companion server, or no Deepgram key on it), pressing BOOT squeezes Muse instead (holding it 3 s
-opens setup), and Muse just looks up and moves its mouth when it hears a voice. The chirps are synthesized on the board.
+While Muse answers, the AI can make it wave, giggle, cheer or go dizzy. Ask "what is Claude
+doing?" and it checks on your Claude Code sessions.
 
-## Voice chat
+Without the companion server, Muse is still a full interactive mascot: pressing BOOT squeezes it
+(holding 3 s opens setup), and it looks up and moves its mouth when it hears a voice. The chirps
+are synthesized on the board.
 
-Muse streams its microphone to the companion server on your computer, which holds your Deepgram
-key and talks to the [Deepgram Voice Agent API](https://developers.deepgram.com/docs/voice-agent):
-speech to text, a reply from an LLM (Claude Haiku 4.5 by default) and an Aura voice. The spoken
-reply streams back to Muse. Muse needs no key of its own, so there is nothing to type on the
-small screen except your WiFi password.
+## How the pieces fit
 
-1. Get an API key from the [Deepgram console](https://console.deepgram.com). Usage is billed to
-   your Deepgram account.
-2. Save it on your computer, where the server looks for it (this asks for the key and hides what
-   you paste; zsh, the macOS default shell):
-
-   ```sh
-   mkdir -p ~/.config/muse
-   read -rs 'k?Paste your Deepgram key: ' && print -rn -- "$k" > ~/.config/muse/deepgram_key && unset k
-   chmod 600 ~/.config/muse/deepgram_key
-   ```
-
-   Or set `DEEPGRAM_API_KEY` in the server's environment.
-3. Start the companion server (next section). Setup opens on Muse's screen on first start, when
-   none of the saved WiFi networks is in range, or after holding the screen for 5 seconds: pick your
-   WiFi and type its password on the watch-style keyboard.
-4. Hold the **BOOT** button on the side, talk, and let go. Press it again while Muse talks to
-   interrupt. The screen stays free for touching Muse.
-
-Ask "what is Claude doing?" and Muse checks on Claude Code for you.
-
-To change the voice, the model or Muse's personality, create `~/.config/muse/voice.json`, for
-example `{"voice": "aura-2-luna-en", "think_provider": "open_ai", "think_model": "gpt-4o-mini"}`.
-The keys are `voice`, `pitch`, `listen_model`, `think_provider`, `think_model` and `prompt`.
-
-Muse speaks with the Deepgram voice raised a little in pitch, so it sounds like the same small
-creature that chirps; set `"pitch": 1` in `voice.json` for the voice unchanged.
-
-The microphone streams only while you hold BOOT. The Deepgram connection opens on the first
-hold, stays open between turns and closes after two quiet minutes.
-
-## Claude Code companion
-
-Muse can show what Claude Code is doing on your computer: it glances up while Claude thinks, reads
-"Editing face.c" while Claude works, waves for attention when Claude needs your permission and
-cheers when the reply is done. A small Python server on your computer (standard library only)
-receives Claude Code's hooks and passes a mood and a caption to Muse over your WiFi; Muse finds
-it by itself. The same server relays voice chat.
-
-```sh
-python3 companion/muse_companion.py     # leave running (on macOS: /usr/bin/python3, see below)
-python3 companion/install_hooks.py      # once: adds the hooks to ~/.claude/settings.json
+```
+ Muse (the board)                companion server (your computer)         Deepgram Voice Agent API
+ screen, touch, BOOT,  <──────>  companion/muse_companion.py  <───────>   speech to text,
+ microphone, speaker     WiFi    holds the Deepgram key          wss      LLM reply, text to speech
+                       websocket            ▲
+                                            │ hooks, 127.0.0.1:8765
+                                       Claude Code
 ```
 
-See [companion/README.md](companion/README.md) for what Muse does for each event, privacy and
-troubleshooting.
+- **The firmware** is the character: animation, touch, motion, chirps and on-screen WiFi setup.
+- **The companion server** is a small Python program (standard library only) on your computer.
+  It relays voice chat to Deepgram, so the API key never goes on the board, and turns Claude
+  Code's hooks into moods and captions for Muse.
+- Muse finds the server by itself: the server announces itself on your network with a UDP beacon.
 
 ## Hardware
 
@@ -101,9 +70,12 @@ troubleshooting.
 | --- | --- |
 | Board | Waveshare ESP32-S3-Touch-AMOLED-1.8, **V2** (CO5300 display, CST820 touch). Tested. |
 | Original board | SH8601 display, FT3168 touch. Untested: set the board package to `1.1.4` in `firmware/main/idf_component.yml`. |
-| Uses | 368 x 448 AMOLED, touch, QMI8658 motion sensor, ES8311 microphone and speaker, 8 MB PSRAM, 16 MB flash |
+| Uses | 368 x 448 AMOLED, touch, BOOT button, QMI8658 motion sensor, ES8311 microphone and speaker, 8 MB PSRAM, 16 MB flash |
+| Computer | macOS or Linux with Python 3.8+ for the companion server, on the same WiFi as Muse |
 
-## Quick start
+## Getting started
+
+### 1. Flash the firmware
 
 You need [ESP-IDF v5.5](https://docs.espressif.com/projects/esp-idf/en/v5.5/esp32s3/get-started/index.html)
 (tested with v5.5.5). The build downloads the board package, LVGL and the drivers automatically.
@@ -114,18 +86,111 @@ idf.py set-target esp32s3
 idf.py -p <PORT> flash monitor
 ```
 
-`<PORT>` is the board's USB port, for example `/dev/cu.usbmodem101` on macOS, `/dev/ttyACM0` on Linux
-or `COM5` on Windows. Flashing replaces whatever firmware is on the board; Waveshare publishes the
-factory firmware in its repository if you want it back.
+`<PORT>` is the board's USB port, for example `/dev/cu.usbmodem101` on macOS, `/dev/ttyACM0` on
+Linux or `COM5` on Windows. Flashing replaces whatever firmware is on the board; Waveshare
+publishes the factory firmware in its repository if you want it back. Every push to `main` is
+also built by GitHub Actions, which keeps the binaries as a downloadable artifact.
+
+### 2. Put Muse on your WiFi
+
+Setup opens on Muse's screen the first time, and whenever none of its saved networks is in range.
+Pick your network and type the password on the watch-style keyboard. To open it later, hold the
+screen for 5 seconds. **Set up from a phone instead**, at the bottom of the list, opens a
+`Muse-setup` network with a setup page at `192.168.4.1`.
+
+### 3. Start the companion server
+
+```sh
+/usr/bin/python3 companion/muse_companion.py     # macOS
+python3 companion/muse_companion.py              # Linux
+```
+
+Leave it running. Muse giggles and shows "Linked to …" when it finds it. On macOS, use Apple's
+`/usr/bin/python3`: the firewall lets it accept Muse's connection, while a Homebrew Python needs
+approving in System Settings → Network → Firewall → Options again after every upgrade.
+
+### 4. Add a Deepgram key for voice chat
+
+Get an API key from the [Deepgram console](https://console.deepgram.com) (usage is billed to your
+Deepgram account) and save it where the server looks for it. This asks for the key and hides what
+you paste (zsh, the macOS default shell):
+
+```sh
+mkdir -p ~/.config/muse
+read -rs 'k?Paste your Deepgram key: ' && print -rn -- "$k" > ~/.config/muse/deepgram_key && unset k
+chmod 600 ~/.config/muse/deepgram_key
+```
+
+Or set `DEEPGRAM_API_KEY` in the server's environment. The server notices the key within a few
+seconds. Then hold BOOT, talk, and let go.
+
+### 5. Connect Claude Code
+
+```sh
+python3 companion/install_hooks.py
+```
+
+This adds the hooks to `~/.claude/settings.json`, keeping your other settings and a backup.
+Restart Claude Code sessions that are already open. `install_hooks.py --remove` takes them out.
+
+## Voice chat
+
+Hold **BOOT** on the side of the board, talk, and let go; the screen stays free for touching Muse.
+
+- Muse chirps "mm?" and tilts its head while it listens; the caption says "Listening…".
+- When you let go it hums, glances up while it thinks, and the caption shows what it heard.
+- The reply plays in Muse's own voice: the Deepgram voice raised a little in pitch, so it sounds
+  like the same small creature that chirps. The mouth follows the words, the body sways on each
+  syllable, gestures land a moment into the reply, and the reply runs underneath as subtitles
+  timed to the audio.
+- Press BOOT again while Muse talks to interrupt it.
+
+Speech to text, the reply and the voice all come from the
+[Deepgram Voice Agent API](https://developers.deepgram.com/docs/voice-agent), with Claude Haiku
+4.5 (through Deepgram) as the default LLM. The microphone streams only while you hold BOOT. The
+connection to Deepgram opens on the first hold, stays open between turns and closes after two
+quiet minutes.
+
+To change the voice, the model or Muse's personality, create `~/.config/muse/voice.json`:
+
+| Key | Default | |
+| --- | --- | --- |
+| `voice` | `aura-2-thalia-en` | Any Deepgram Aura voice |
+| `pitch` | `1.18` | How much higher Muse speaks; `1` for the voice unchanged |
+| `listen_model` | `nova-3` | Deepgram speech-to-text model |
+| `think_provider` / `think_model` | `anthropic` / `claude-haiku-4-5` | Any Deepgram think provider and model, for example `open_ai` / `gpt-4o-mini` |
+| `prompt` | a short, playful Muse | Muse's personality |
+
+To test voice chat without Muse, `python3 companion/test_voice.py "Hello Muse!"` plays Muse's part
+from your computer (macOS `say`, or `--wav file.wav`) and saves the spoken reply to `reply.wav`.
+
+## Claude Code companion
+
+| Claude Code | Muse |
+| --- | --- |
+| A session starts | Waves, shows the project name |
+| Thinking | Glances up and aside, "Thinking..." |
+| Running a tool | Reads the caption: "Editing face.c", "Run the tests" |
+| Waiting for your permission | Waves for attention (up to three times): "OK to flash the firmware?" |
+| A tool call fails | A quiet, puzzled look |
+| Finished its reply | Cheers: "Done!" |
+| Compacting its memory | Squeezes: "Tidying up memory" |
+| The session ends | Waves goodbye |
+
+With several sessions open, Muse shows the one that most needs you. Prompts, file contents and
+commands stay on your computer: Muse only receives the mood, a short description such as "Editing
+face.c", and the project folder name. `python3 companion/muse_companion.py demo` plays a made-up
+session, and `curl http://127.0.0.1:8765/` shows what the server sees. See
+[companion/README.md](companion/README.md) for the details.
 
 ## Settings
 
-`idf.py menuconfig` → **Muse charm**:
+Firmware options are in `idf.py menuconfig` → **Muse charm**:
 
 | Option | Default | |
 | --- | --- | --- |
 | Display brightness | 80 % | |
-| Play chirps on the speaker / volume | on / 65 % | |
+| Play chirps on the speaker / volume | on / 65 % | Volume applies to Muse's voice too |
 | React to voice / microphone gain | on / 30 dB | |
 | Voice threshold above room noise | 2.8x | Lower if Muse ignores you, raise if it reacts to background noise |
 | Tilt and shake | on | |
@@ -151,57 +216,62 @@ factory firmware in its repository if you want it back.
    │
    ▼
  ESP32-S3
-   clips.c     decodes one JPEG per tick into PSRAM and swaps it onto an LVGL canvas (10 fps)
-   face.c      draws the eyes and mouth live at each frame's anchors (30 fps)
-   behavior.c  picks the clip: idle, wave, giggle, cheer, lean, dizzy, listen, squeeze
-   touch.c / motion.c / audio.c   gestures, tilt and shake, voice and chirps
-   companion.c link to the companion server: Claude Code moods, voice chat audio both ways
- companion/ on your computer
-   muse_companion.py  Claude Code hooks in, moods out; muse_voice.py relays voice to Deepgram
+   clips.c       decodes one JPEG per tick into PSRAM and swaps it onto an LVGL canvas (10 fps)
+   face.c        draws the eyes, mouth and caption live at each frame's anchors (30 fps)
+   behavior.c    picks the clip and the expression: idle, wave, giggle, cheer, lean, dizzy,
+                 listen, squeeze, talking
+   touch.c / motion.c / audio.c   gestures and BOOT, tilt and shake, microphone, speaker, chirps
+   companion.c   the link to the companion server; agent.c streams voice chat over it
 ```
 
 The QSPI display can refresh a full frame about 10 times a second, so the body runs at 10 fps.
 The face is small, so redrawing only the eyes and mouth runs at 30 fps. That is what lets the eyes
 track a finger smoothly and blink, and it lets one set of body frames carry every expression.
+Each clip frame carries the eye and mouth positions, the face roll and a suggested expression,
+which the firmware can override, for example to move the mouth with Muse's voice.
 
-Each clip frame carries the eye and mouth positions, the face roll and a suggested expression.
-The firmware can override the expression, for example to open the mouth with your voice while
-listening.
+Voice chat streams 16 kHz audio both ways over the same websocket as the Claude Code moods. The
+server sends the reply a couple of seconds ahead of playback, and each sentence's subtitle just
+before its audio, so Muse can time the words. On this board, full-power WiFi can dip the supply
+and blank the panel, so WiFi stays in modem sleep with larger TCP windows, transmit power is
+capped at 14 dBm, and `panel.c` rewrites the panel's settings every few seconds.
 
 ## Repository layout
 
 ```
-firmware/            ESP-IDF project
+firmware/              ESP-IDF project
   main/
-    main.c           start-up
-    clips.c/.h       frame table, JPEG decoding, canvas
-    face.c/.h        live eyes and mouth
-    behavior.c/.h    reactions and the idle loop
-    touch.c/.h       drag, tap, belly tap, long press, swipe
-    motion.c/.h      QMI8658 tilt and shake
-    audio.c/.h       ES8311 microphone and speaker
-    sounds.c/.h      the chirps
-    agent.c/.h       voice chat, relayed by the companion server
-    wifi.c/.h        saved networks and reconnects
-    portal.c/.h      the Muse-setup page
-    settings.c/.h    NVS start-up
-    setup_ui.c/.h    on-screen WiFi setup
-    companion.c/.h   Claude Code companion client
+    main.c             start-up
+    clips.c/.h         frame table, JPEG decoding, canvas
+    face.c/.h          live eyes, mouth and caption
+    behavior.c/.h      reactions and the idle loop
+    touch.c/.h         drag, tap, belly tap, long press, swipe, BOOT
+    motion.c/.h        QMI8658 tilt and shake
+    audio.c/.h         ES8311 microphone and speaker
+    sounds.c/.h        the chirps
+    agent.c/.h         voice chat, relayed by the companion server
+    companion.c/.h     link to the companion server, Claude Code moods
+    wifi.c/.h          saved networks and reconnects
+    setup_ui.c/.h      on-screen WiFi setup
+    portal.c/.h        the Muse-setup page for phones
+    panel.c/.h         keeps the AMOLED panel's settings
+    settings.c/.h      NVS start-up
     Kconfig.projbuild  menuconfig options
-companion/
-  muse_companion.py  server for the Claude Code companion and voice chat
-  muse_voice.py      voice chat relay to the Deepgram Voice Agent API
-  muse_ws.py         small websocket implementation
-  install_hooks.py   adds or removes the Claude Code hooks
-assets/              exported frames and anchors (input to the build)
+companion/             runs on your computer
+  muse_companion.py    the server: Claude Code hooks, moods, Muse's connection
+  muse_voice.py        voice chat relay to the Deepgram Voice Agent API
+  muse_ws.py           small websocket implementation
+  install_hooks.py     adds or removes the Claude Code hooks
+  test_voice.py        tests voice chat without Muse
+assets/                exported frames and anchors (input to the build)
 blender/
-  muse.blend         character, rig, studio lights, device camera
-  export_clips.py    rebuilds the clips and re-exports assets/
+  muse.blend           character, rig, studio lights, device camera
+  export_clips.py      rebuilds the clips and re-exports assets/
 tools/
-  pack_frames.py     assets → muse_frames.bin (run by the build)
-  encode_frames.sh   PNG renders → baseline JPEG
-  preview_face.py    preview clips with the face on your computer
-docs/images/         README images
+  pack_frames.py       assets → muse_frames.bin (run by the build)
+  encode_frames.sh     PNG renders → baseline JPEG
+  preview_face.py      preview clips with the face on your computer
+docs/images/           README images
 ```
 
 ## Changing the character or the clips
@@ -231,18 +301,27 @@ the scene, because the anchors are taken from them.
 
 ## Troubleshooting
 
-- **Muse shakes its head when you hold BOOT:** voice chat couldn't start. The server's
-  output says why: no key or an unusable key file, or an error from Deepgram (for example an
-  invalid key or voice name).
+- **Muse never shows "Linked to …".** Check that the server is running and Muse is on the same
+  WiFi. If the serial log shows "Error read response for Upgrade header", the computer's firewall
+  is blocking Python (see step 3). If it never finds the server, the network blocks broadcasts
+  (guest WiFi, many offices): set the server address in menuconfig, for example
+  `ws://192.168.1.20:8765/device`.
+- **Muse shakes its head when you hold BOOT:** voice chat couldn't start. The server's output says
+  why: no key or an unusable key file, or an error from Deepgram (for example an invalid voice
+  name).
 - **Muse answers before you finish:** Deepgram ends the turn at a long pause. Keep talking, or
-  hold again to add more.
+  press BOOT again to add more.
+- **The screen goes black but Muse still chirps:** the panel lost its settings in a supply dip.
+  Muse writes them again every 3 seconds, which should bring the picture back; if it happens
+  often, try another USB cable or port.
+- **Muse stays on "Thinking..." after you interrupt Claude:** interrupted turns send no "done"
+  event, so the mood clears by itself after five minutes, or at your next prompt.
 - **Muse leans the wrong way when tilted:** turn on *Invert the lean direction* in menuconfig.
 - **Muse doesn't react to your voice, or reacts to noise:** turn on *Log microphone and motion
   readings* and compare the `mic rms` level while talking with the `room noise` level, then adjust
   the voice threshold or microphone gain.
-- **`i2s_channel_disable … has not been enabled yet` in the log:** harmless. The codec driver
-  disables the channels once before configuring them.
-- **`Please check pull-up resistances` in the log:** harmless. It comes from the touch controller probe.
+- **`i2s_channel_disable … has not been enabled yet` or `Please check pull-up resistances` in
+  the log:** harmless messages from the codec and touch drivers.
 
 ## Built with
 
@@ -250,8 +329,17 @@ the scene, because the anchors are taken from them.
 [LVGL](https://github.com/lvgl/lvgl),
 [esp_new_jpeg](https://components.espressif.com/components/espressif/esp_new_jpeg),
 [esp_codec_dev](https://components.espressif.com/components/espressif/esp_codec_dev),
-[Deepgram](https://deepgram.com) for speech and voice, the WiFi and setup page from
+[esp_websocket_client](https://components.espressif.com/components/espressif/esp_websocket_client),
+the [Deepgram Voice Agent API](https://developers.deepgram.com/docs/voice-agent) for voice,
+[Claude Code hooks](https://code.claude.com/docs/en/hooks) for the companion, the WiFi setup from
 [esp32-agui](https://github.com/pramodthe/esp32-agui),
 Waveshare's [board package](https://components.espressif.com/components/waveshare/esp32_s3_touch_amoled_1_8)
 and [QMI8658 driver](https://components.espressif.com/components/waveshare/qmi8658), and
 [Blender](https://www.blender.org) for the character.
+
+## License
+
+The source code is under the [MIT License](LICENSE). The Muse character and its design belong to
+Meta: the character art and model in `assets/`, `blender/muse.blend` and `docs/images/` are not
+covered by that license (see the note at the top). Changes are listed in
+[CHANGELOG.md](CHANGELOG.md).
