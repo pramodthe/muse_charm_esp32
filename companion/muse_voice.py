@@ -145,7 +145,9 @@ class Voice:
         self.ready = False
         self.pending = []                   # microphone audio from before Deepgram was ready
         self.talking = False
-        self.discard = False                # drop reply audio until the next reply starts
+        self.heard = 0                      # bytes of microphone audio this turn
+        self.discard = False                # drop reply audio (you interrupted it)
+        self.replying = False               # reply audio is flowing to Muse
         self.history = []
         self.last_sent = self.last_activity = time.monotonic()
         self.tasks = []
@@ -153,6 +155,7 @@ class Voice:
     # ------------------------------------------------------------ from Muse
     def talk_start(self):
         self.talking = True
+        self.heard = 0
         self.discard = True
         self.pending = []
         self.last_activity = time.monotonic()
@@ -168,6 +171,7 @@ class Voice:
     def mic(self, data):
         if not self.talking:
             return
+        self.heard += len(data)
         if self.ready:
             self._send(ws.BINARY, data)
         elif len(self.pending) < 400:      # about 16 s
@@ -177,6 +181,9 @@ class Voice:
         if not self.talking:
             return
         self.talking = False
+        self.discard = False                # whatever comes next answers this turn
+        self.replying = False
+        log("voice: heard %.1f s from Muse%s" % (self.heard / BYTES_PER_S, "" if self.ready else " (Deepgram not ready yet)"))
         self.last_activity = time.monotonic()
         self.tasks = [t for t in self.tasks if not t.done()]
         self.tasks.append(asyncio.ensure_future(self._tail()))
@@ -282,23 +289,33 @@ class Voice:
             self.dg_reader = self.dg_writer = None
             self.ready = False
 
+    def _start_reply(self):
+        if not self.replying:
+            self.replying = True
+            self.link.queue_voice("start", None)
+
     def _reply_audio(self, data):
         if self.discard or self.talking:
             return
+        self._start_reply()               # Deepgram no longer always sends AgentStartedSpeaking
         self.last_activity = time.monotonic()
         for i in range(0, len(data), CHUNK):
             self.link.queue_voice("audio", data[i:i + CHUNK])
 
     def _event(self, msg):
         t = msg.get("type")
+        if t not in ("ConversationText", "FunctionCallRequest", "Warning", "Error"):
+            log("voice: Deepgram:", t)
         if t == "SettingsApplied":
             self.ready = True
             for chunk in self.pending:
                 self._send(ws.BINARY, chunk)
             self.pending = []
         elif t == "UserStartedSpeaking":
-            self.discard = True
-            self.link.flush_voice()
+            if self.talking:                # you are holding Muse: drop the old reply
+                self.discard = True
+                self.replying = False
+                self.link.flush_voice()
         elif t == "ConversationText":
             role, content = msg.get("role"), msg.get("content") or ""
             log("voice: %s: %s" % ("you" if role == "user" else "muse", content))
@@ -307,9 +324,11 @@ class Voice:
         elif t == "AgentThinking":
             self.link.send_json({"type": "voice", "state": "thinking"})
         elif t == "AgentStartedSpeaking":
-            self.discard = False
-            self.link.queue_voice("start", None)
+            if not self.talking:
+                self.discard = False
+                self._start_reply()
         elif t == "AgentAudioDone":
+            self.replying = False
             self.link.queue_voice("json", {"type": "voice", "state": "done"})
         elif t == "FunctionCallRequest":
             for f in msg.get("functions") or []:
