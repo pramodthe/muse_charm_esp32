@@ -45,11 +45,12 @@ when Claude needs your OK and cheers when the reply is done.
 | Nothing | Breathes, blinks and glances around; now and then peeks at you up close, looks around, wiggles or stretches |
 | Nothing for 3 minutes | Dozes off: eyes closed, "z z Z", the screen dimmed. Touch it, pick it up or press BOOT to wake it |
 | Ask for something bigger: "research the best budget 3D printers" | Says it's on it, works in the background for a few minutes, then tells you the answer in a sentence; the write-up is on a web page |
-| Set a timer, run its battery down, pick it up in the morning | Speaks first: "Time's up! Tea.", "I'm getting sleepy, could you plug me in?", a good morning |
+| Set a timer or a reminder, run its battery down, pick it up in the morning | Speaks first: "Time's up! Tea.", "Reminder: call mum.", "I'm getting sleepy, could you plug me in?", and a good morning with what is on today |
 
 The AI has Muse's body and screen as tools, so you can just ask: "dance for me", "come closer",
 "show the word hello", "turn the volume down", "good night". It can sense things too: "how's your
-battery?", "what time is it?", "set a timer for five minutes", "remember that I like tea". Ask
+battery?", "what time is it?", "set a timer for five minutes", "remind me at five to call mum",
+"remember that I like tea". Ask
 "what is Claude doing?" and it checks on your Claude Code sessions.
 
 Without the companion server, Muse is still a full interactive mascot: pressing BOOT squeezes it
@@ -216,6 +217,7 @@ firmware performs them (`perform()` in `firmware/main/behavior.c`):
 | `muse_status` | Reads Muse's own sensors: battery and charging, WiFi, whether it is upright or lying down, how noisy the room is, brightness, volume, time since it started, free memory | "How's your battery?", "is it noisy here?" |
 | `time_now` | The time, weekday and date where you are | "What time is it?" |
 | `timer` | Sets, lists or cancels timers; when one is up Muse says so, waves and shows its label | "Set a timer for five minutes for tea" |
+| `reminder` | Sets, lists or cancels reminders for a clock time: today, on a later day, or repeating every day, on weekdays or every week. When one is due Muse says it, waves and shows a sign | "Remind me at 5 pm to call mum", "remind me every weekday at nine to stand up", "what reminders do I have?" |
 | `remember`, `forget` | Keeps short notes about you between conversations, and drops them again | "Remember my name is Sam", "forget everything" |
 | `claude_status` | Reads what your Claude Code sessions are doing | "What is Claude doing?" |
 | `work_on`, `work_status` | Hands research to a background job that searches the web and writes up what it finds; says how jobs are going and what they found | "Research the best budget 3D printers", "what did you find?" |
@@ -223,8 +225,10 @@ firmware performs them (`perform()` in `firmware/main/behavior.c`):
 Muse reports its sensors to the server at the start of each conversation and once a minute
 (`power.c` reads the board's AXP2101 for the battery). The server side of the other tools is in
 [`companion/muse_world.py`](companion/muse_world.py). Notes are kept in
-`~/.config/muse/memory.json` (online: on the host's storage), and timers live in the server, so
-they are lost if it restarts.
+`~/.config/muse/memory.json` and reminders in `reminders.json` beside it (online: on the host's
+storage), so both survive a restart. A reminder that came due while the server was off is said
+when it is back, if that is within 12 hours, and one that came due while Muse was not connected
+is said when it connects. Timers live in the server only, so they are lost if it restarts.
 
 Muse also uses the moves by itself to show feelings while it talks. To add a move, add it to
 `MOVES` in `muse_voice.py`, to `muse_move_t` in `muse.h` and the name table in `agent.c`, and
@@ -275,9 +279,9 @@ with colours and sizes from the Meta Horizon OS UI Set:
 
 | | |
 | --- | --- |
-| Chat | One conversation with Muse, typed and spoken: what you type here and what you say to the device both appear, with Muse's answers and a card for each write-up. Type a message and Muse answers in a few seconds, with the same tools as its voice: "dance for me" makes the Muse on your desk dance, "set a timer for ten minutes" sets one, and a bigger request starts a background job |
+| Chat | One conversation with Muse, typed and spoken: what you type here and what you say to the device both appear, with Muse's answers and a card for each write-up. Type a message and Muse answers in a few seconds, with the same tools as its voice: "dance for me" makes the Muse on your desk dance, "remind me at 5 pm to call mum" sets a reminder, and a bigger request starts a background job |
 | Ideas | Things to hand over (a tap puts one in the message box) and things to say out loud |
-| Memory | What Muse remembers about you: add a note, or forget one |
+| Memory | Your reminders, each with when it is due and a button to cancel it, and what Muse remembers about you: add a note, or forget one |
 | At the top | Whether Muse is connected, its battery, and running timers |
 
 For your own picture of Muse at the top, save it as `companion/avatar.webp` (it can be animated),
@@ -327,16 +331,17 @@ Muse does not only answer. It wakes up, comes close and says something by itself
 | When | Muse |
 | --- | --- |
 | A timer is up | "Time's up! Tea.", with a wave and the label as a sign |
+| A reminder is due | "Reminder: call mum.", with a wave and a sign. At any hour, since you asked for it |
 | A background job is finished | "I'm done!" and the answer in a sentence, with a cheer |
 | Its battery falls to 20 %, and again at 10 % | Asks to be plugged in, with the level as a sign. Not between 10 pm and 8 am |
-| You pick it up, wake it or switch it on for the first time in a morning (5 to 11 am) | Says good morning in its own words, and waves |
+| You pick it up, wake it or switch it on for the first time in a morning (5 to 11 am) | Says good morning in its own words, and waves. If there is something to tell, it is a short briefing: today's reminders, any you missed, and research it finished since the last one |
 
 Hold BOOT to answer it. The server starts these (`Voice.announce()` in `muse_voice.py`, the
-wording and limits in `muse_world.py`): a timer and the battery are spoken word for word, and for
+wording and limits in `muse_world.py`): a timer, a reminder and the battery are spoken word for word, and for
 the greeting the AI is handed a note and finds its own words, so it can use your name if it
 remembers it. Muse plays them the way it plays any reply, so they need no extra memory on the
 board. If Muse cannot speak (no Deepgram key, or `"speak_first": false` in `voice.json`), a timer
-still ends with chirps, a wave and the sign.
+or a reminder still comes with chirps, a wave and the sign.
 
 Speech to text, the reply and the voice all come from the
 [Deepgram Voice Agent API](https://developers.deepgram.com/docs/voice-agent), with Claude Haiku
@@ -554,7 +559,7 @@ firmware/              ESP-IDF project
 companion/             runs on your computer
   muse_companion.py    the server: Claude Code hooks, moods, Muse's connection
   muse_voice.py        voice chat relay to the Deepgram Voice Agent API
-  muse_world.py        the AI's time, timers, memory and view of Muse's sensors
+  muse_world.py        the AI's time, timers, reminders, memory and view of Muse's sensors
   muse_jobs.py         background jobs: starts them, keeps their results
   muse_worker.py       one job: a Deep Agent that researches and writes up
   muse_results.py      the web app: the chat, ideas, memory, Muse's status

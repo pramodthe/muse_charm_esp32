@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.0 (2026-11-12)
+
+- **Reminders.** "Remind me at 5 pm to call mum", out loud or typed: for today, a later day, or repeating every day, on weekdays or every week (the AI's new `reminder` tool). When one is due Muse wakes, says it, waves and shows a sign, and the line goes into the chat. They are kept in `reminders.json`, so they survive a restart; one that came due while the server was off or Muse was not connected is said when it is back.
+- **A morning briefing.** The first good morning of the day now includes today's reminders, any you missed, and the research Muse finished since the last one.
+- The web app's Memory tab lists your reminders with a button to cancel each (`POST /reminders`).
+
 ## 0.10.0 (2026-11-12)
 
 - **Type to Muse.** The web app's message box is now a real chat: Muse answers in a few seconds (Claude through the Anthropic API, `chat_model`), with the same tools as its voice. A typed "dance for me" makes the Muse on your desk dance; a bigger request starts a background job.

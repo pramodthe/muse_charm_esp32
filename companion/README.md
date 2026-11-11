@@ -26,7 +26,7 @@ Claude Code ──hooks (curl)──> muse_companion.py <──websocket──> 
 | --- | --- |
 | `muse_companion.py` | The server: Claude Code hooks on `127.0.0.1:8765/hook`, Muse's websocket on `:8765/device`, the UDP beacon on port 47800, a status page on `:8765/` |
 | `muse_voice.py` | Voice chat: relays audio between Muse and Deepgram, raises the voice's pitch, sends subtitles and gestures |
-| `muse_world.py` | The AI's time, timers, memory and its view of Muse's sensors |
+| `muse_world.py` | The AI's time, timers, reminders, memory and its view of Muse's sensors |
 | `muse_jobs.py` | Background jobs: starts `muse_worker.py`, keeps the results, tells Muse when one is done |
 | `muse_worker.py` | One job, in its own process: a Deep Agent that searches the web and writes up what it finds |
 | `muse_results.py` | The web app at `/results`: the chat, ideas, memory, Muse's status |
@@ -122,7 +122,7 @@ Create `~/.config/muse/voice.json` to change how Muse talks, for example
 | `think_provider` / `think_model` | `anthropic` / `claude-haiku-4-5` | Any Deepgram think provider and model |
 | `prompt` | a short, playful Muse | Muse's personality |
 | `timezone` | the server's own | An IANA name such as `Australia/Sydney`, for the time tool |
-| `speak_first` | `true` | `false`: no spoken timers, battery warnings or good mornings |
+| `speak_first` | `true` | `false`: no spoken timers, reminders, battery warnings or good mornings (timers and reminders still chirp and show a sign) |
 
 The AI's tools are declared in `TOOLS` and carried out in `_function()` in `muse_voice.py`:
 
@@ -131,9 +131,9 @@ The AI's tools are declared in `TOOLS` and carried out in `_function()` in `muse
   firmware performs.
 - `muse_status`: what Muse last reported about itself (battery, WiFi, position, room noise ...).
   Muse sends a `status` message at the start of each conversation and once a minute.
-- `time_now`, `timer`, `remember` and `forget`, in `muse_world.py`. Notes are kept in
+- `time_now`, `timer`, `reminder`, `remember` and `forget`, in `muse_world.py`. Notes are kept in
   `memory.json` in `~/.config/muse` (or `MUSE_DATA_DIR`) and added to the prompt when a
-  conversation starts.
+  conversation starts; reminders are kept in `reminders.json` there.
 - `claude_status`: what your Claude Code sessions are doing.
 - `work_on` and `work_status`: background jobs, below.
 
@@ -161,7 +161,7 @@ opens it), laid out as a chat. `GET /avatar` serves `companion/avatar.webp` (or 
 for the jobs when it is not signed in, and otherwise `/feed.json`: the conversation, the jobs
 and Muse's state, timers and memory in one answer. It posts `{"text": ...}` to `/chat` for a
 typed message, `{"task": ...}` to `/ask` to start a job directly (which calls `Hub.start_job()`,
-the same as the `work_on` tool) and `{"add": ...}` or `{"forget": ...}` to `/memory`.
+the same as the `work_on` tool) and `{"add": ...}` or `{"forget": ...}` to `/memory`, and `{"cancel": "<id>"}` to `/reminders`.
 
 `muse_chat.Conversation` keeps what was said in `chat.json`, from both sides: the voice adds each
 spoken turn, and `muse_chat.reply()` adds each typed one. `reply()` asks Claude with the same
@@ -186,9 +186,10 @@ microphone audio.
 | Trigger | From | Says |
 | --- | --- | --- |
 | A timer is up | `Hub.alert()` | `timer_line()`: "Time's up! Tea." |
+| A reminder is due (`Reminders.run()` looks every 10 s) | `Hub.remind()` | `reminder_line()`: "Reminder: call mum." With no Muse connected it is kept in `state.json` and said by `Hub.catch_up()` 8 s after one connects |
 | A background job ends | `Hub.on_job_done()` | "I'm done!" and the job's summary, or that it could not finish |
 | `status` reports a battery at or under 20 %, then 10 %, not charging | `Hub.on_status()` | `battery_line()`; not between 10 pm and 8 am |
-| Muse sends `{"type":"awake"}` (picked up, woken by touch, switched on) | `Hub.on_awake()` | The AI's own good morning, once a day between 5 and 11 am (`state.json` remembers the day) |
+| Muse sends `{"type":"awake"}` (picked up, woken by touch, switched on) | `Hub.on_awake()` | The AI's own good morning, once a day between 5 and 11 am (`state.json` remembers the day). `briefing_note()` adds today's reminders, missed ones and the research finished since the last briefing to the note it is handed |
 
 An announcement waits for a pause if a conversation is under way (a greeting is dropped instead).
 If Muse cannot speak, it gets `{"type":"alert","text":"..."}`: chirps, a wave and the sign.

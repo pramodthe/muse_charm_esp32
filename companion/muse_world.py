@@ -5,8 +5,11 @@ what it has been asked to remember, and how Muse itself is doing.
 These back the tools in muse_voice.py:
 
     time_now     the date and time where you are
-    timer        set, list or cancel timers; when one is up Muse chirps, waves
+    timer        set, list or cancel timers; when one is up Muse says so, waves
                  and shows its label
+    reminder     set, list or cancel reminders for a clock time, once or
+                 repeating; they are kept in reminders.json, so they survive a
+                 restart, and Muse says them when the time comes
     remember     keep a short note about you between conversations
     forget       drop notes again
     muse_status  what Muse's own sensors report (battery, WiFi, how it is
@@ -24,11 +27,16 @@ import asyncio
 import datetime
 import json
 import os
+import secrets
 import time
 
 DATA_DIR = os.environ.get("MUSE_DATA_DIR") or os.path.expanduser("~/.config/muse")
 MEMORY_FILE = os.path.join(DATA_DIR, "memory.json")
 STATE_FILE = os.path.join(DATA_DIR, "state.json")
+REMINDERS_FILE = os.path.join(DATA_DIR, "reminders.json")
+MAX_REMINDERS = 40
+REMINDER_MAX = 120
+LATE_S = 12 * 3600      # a reminder that was due while the server was off is still said, this long after
 MAX_NOTES = 40
 NOTE_MAX = 160
 MAX_TIMERS = 10
@@ -72,6 +80,33 @@ GREETING_NOTE = ("(A note from your own senses, not something the user said: the
                  "for the first time this morning. Say good morning in one short, warm sentence, and wave.)")
 
 
+def briefing_note(today, missed, finished):
+    """The note that asks the AI for the morning's greeting. With anything to
+    report (`today`: reminders due today as "5:00 PM: call mum"; `missed`:
+    reminders that came up while Muse was away; `finished`: titles of research
+    that is ready) it becomes a short briefing."""
+    if not (today or missed or finished):
+        return GREETING_NOTE
+    parts = []
+    if today:
+        parts.append("Reminders for today: " + "; ".join(today) + ".")
+    if missed:
+        parts.append("Reminders that came up while you were away: " + "; ".join(missed) + ".")
+    if finished:
+        parts.append("Research you finished since you last spoke, ready to read in the web app: " +
+                     "; ".join(finished) + ".")
+    return ("(A note from your own senses, not something the user said: they have just picked you up for the "
+            "first time this morning. Say good morning and give them this briefing in two or three short "
+            "spoken sentences, and wave. " + " ".join(parts) + ")")
+
+
+def reminder_line(text, late=False):
+    """What Muse says when a reminder is due."""
+    text = " ".join(str(text).split())
+    text = text + ("" if text[-1:] in ".!?" else ".")
+    return ("A reminder from earlier: " if late else "Reminder: ") + text
+
+
 def timer_line(label):
     """What Muse says when a timer is up."""
     label = " ".join(str(label or "").split())
@@ -101,6 +136,24 @@ def greeting_due(zone=""):
         return False
     _keep("greeted", today)
     return True
+
+
+def missed_reminders(add=None, clear=False):
+    """Reminders that came up while no Muse was connected, kept until Muse has said them."""
+    items = [str(x) for x in _state().get("missed", []) if isinstance(x, str)]
+    if add or clear:
+        _keep("missed", [] if clear else (items + [add])[-10:])
+    return items
+
+
+def finished_since_briefing(jobs, mark=False):
+    """Titles of research that finished since the last morning briefing (or in the last day)."""
+    since = max(float(_state().get("briefed") or 0), time.time() - 24 * 3600)
+    titles = [j.get("title", "") for j in jobs if j.get("status") == "done"
+              and j.get("created", 0) + (j.get("took_s") or 0) > since][:3]
+    if mark:
+        _keep("briefed", time.time())
+    return titles
 
 
 def _state():
@@ -221,6 +274,137 @@ class Timers:
         for tid in gone:
             self.items.pop(tid)["task"].cancel()
         return {"ok": True, "cancelled": len(gone), "left": len(self.items)}
+
+
+# ---------------------------------------------------------------- reminders
+REPEATS = {"daily": "every day", "weekdays": "on weekdays", "weekly": "every week"}
+
+
+def clock(t):
+    return t.strftime("%I:%M %p").lstrip("0")
+
+
+class Reminders:
+    """Reminders for a clock time, once or repeating. `fire(reminder, late)` is
+    called when one is due; `late` when it was due while the server was off.
+    Each is {"id", "text", "at" (when it is next due, time.time), "repeat"}."""
+
+    def __init__(self, fire, zone=lambda: ""):
+        self.fire = fire
+        self.zone = zone   # the user's time zone, asked for each time (voice.json can change)
+        try:
+            with open(REMINDERS_FILE) as f:
+                data = json.load(f)
+            self.items = [r for r in data if isinstance(r, dict) and r.get("text") and r.get("at")]
+        except (OSError, ValueError):
+            self.items = []
+
+    def _save(self):
+        try:
+            os.makedirs(DATA_DIR, exist_ok=True)
+            with open(REMINDERS_FILE + ".tmp", "w") as f:
+                json.dump(self.items, f, indent=1)
+            os.replace(REMINDERS_FILE + ".tmp", REMINDERS_FILE)
+        except OSError:
+            pass
+
+    def _local(self, at):
+        return datetime.datetime.fromtimestamp(at, now(self.zone()).tzinfo)
+
+    def when(self, r):
+        """When a reminder is due, in words: "today at 5:00 PM", "every day at 9:00 AM"."""
+        t, today = self._local(r["at"]), now(self.zone()).date()
+        if r.get("repeat") in REPEATS:
+            day = " on %ss" % t.strftime("%A") if r["repeat"] == "weekly" else ""
+            return "%s%s at %s" % (REPEATS[r["repeat"]], day, clock(t))
+        days = (t.date() - today).days
+        day = "today" if days == 0 else "tomorrow" if days == 1 else "on %s %d %s" % (
+            t.strftime("%A"), t.day, t.strftime("%B"))
+        return "%s at %s" % (day, clock(t))
+
+    def _after(self, r):
+        """The next time a repeating reminder is due after r["at"]."""
+        t = self._local(r["at"])
+        while True:
+            t = datetime.datetime.combine(t.date() + datetime.timedelta(days=7 if r["repeat"] == "weekly" else 1),
+                                          t.timetz().replace(fold=0))
+            if (r["repeat"] != "weekdays" or t.weekday() < 5) and t.timestamp() > time.time():
+                return t.timestamp()
+
+    def set(self, text, at_time="", date="", in_minutes=None, repeat=""):
+        text = " ".join(str(text or "").split())[:REMINDER_MAX]
+        if not text:
+            return {"ok": False, "error": "say what to remind about"}
+        if len(self.items) >= MAX_REMINDERS:
+            return {"ok": False, "error": "too many reminders; cancel some first"}
+        repeat = repeat if repeat in REPEATS else ""
+        current = now(self.zone())
+        try:
+            if in_minutes not in (None, ""):
+                minutes = float(in_minutes)
+                if not 0 < minutes <= 366 * 24 * 60:
+                    raise ValueError
+                due = current + datetime.timedelta(minutes=minutes)
+            else:
+                hour, minute = (int(x) for x in str(at_time).strip().split(":")[:2])
+                day = datetime.date.fromisoformat(str(date).strip()) if date else current.date()
+                due = datetime.datetime.combine(day, datetime.time(hour, minute), current.tzinfo)
+                if not date and due <= current:
+                    due += datetime.timedelta(days=1)       # "at 7" said after 7: tomorrow
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "give the time as HH:MM on a 24-hour clock (and the date as "
+                                          "YYYY-MM-DD), or in_minutes"}
+        r = {"id": secrets.token_hex(4), "text": text, "at": due.timestamp(), "repeat": repeat}
+        if repeat == "weekdays" and due.weekday() >= 5 or due <= current and repeat:
+            r["at"] = self._after(r)
+        elif due <= current:
+            return {"ok": False, "error": "that time has already passed"}
+        self.items.append(r)
+        self._save()
+        return {"ok": True, "reminder": text, "when": self.when(r)}
+
+    def list(self):
+        return {"reminders": [{"id": r["id"], "text": r["text"], "when": self.when(r)}
+                              for r in sorted(self.items, key=lambda r: r["at"])]}
+
+    def cancel(self, which):
+        """Cancel by id, by words in the text, or "all"."""
+        which = " ".join(str(which or "").split()).lower()
+        if not which:
+            return {"ok": False, "error": "say which reminder, or 'all'"}
+        gone = [r for r in self.items if which == r["id"]] or \
+               [r for r in self.items if which in ("all", "everything") or which in r["text"].lower()]
+        self.items = [r for r in self.items if r not in gone]
+        self._save()
+        return {"ok": True, "cancelled": [r["text"] for r in gone], "left": len(self.items)}
+
+    def today(self):
+        """Reminders still to come today, as "5:00 PM: call mum"."""
+        current = now(self.zone())
+        return ["%s: %s" % (clock(self._local(r["at"])), r["text"]) for r in sorted(self.items, key=lambda r: r["at"])
+                if r["at"] > time.time() and self._local(r["at"]).date() == current.date()]
+
+    def check(self):
+        """Fire what is due. Called every few seconds."""
+        due = [r for r in self.items if r["at"] <= time.time()]
+        for r in due:
+            late = time.time() - r["at"]
+            if r.get("repeat") in REPEATS:
+                r["at"] = self._after(r)
+            else:
+                self.items.remove(r)
+            if late < LATE_S:
+                self.fire(r, late > 120)
+        if due:
+            self._save()
+
+    async def run(self):
+        while True:
+            try:
+                self.check()
+            except Exception as e:      # one bad reminder must not stop the rest
+                print(time.strftime("%H:%M:%S"), "reminders:", type(e).__name__, e, flush=True)
+            await asyncio.sleep(10)
 
 
 # ---------------------------------------------------------------- Muse itself

@@ -155,6 +155,7 @@ class Hub:
         self.battery_told = 100   # the battery level Muse last warned about (100: not yet)
         self.jobs = muse_jobs.Jobs(self.on_job_done)   # background work (muse_worker.py)
         self.talk = muse_chat.Conversation()           # what was said, out loud and in the web app
+        self.reminders = muse_world.Reminders(self.remind, lambda: muse_voice.options()["timezone"])
         self.typing = asyncio.Lock()                   # one typed message is answered at a time
         self.retired_until = 0.0  # online: a new version is taking over; turn devices away until then
         # Online: let anyone who has the address read the results page without the token.
@@ -286,6 +287,7 @@ class Hub:
             "connected": len(self.devices),
             "muse": next((link.status_report() for link in self.devices.values() if link.status), None),
             "timers": self.timers.list()["timers"],
+            "reminders": self.reminders.list()["reminders"],
             "memory": muse_world.notes(),
             "voice": muse_voice.key_status()[0] is not None,
             "cannot_work": self.jobs.problem() or "",
@@ -318,12 +320,41 @@ class Hub:
             log("battery at %d %%: telling" % percent)
             link.voice.announce(text=line, moves=["tilt_head"], sign=sign, secs=20, alert=sign)
 
+    def remind(self, reminder, late=False):
+        """A reminder is due: Muse says it, waves and shows a sign. It goes into the
+        conversation too. With no Muse connected it is kept, and said when one is."""
+        line = muse_world.reminder_line(reminder["text"], late)
+        log("reminder:", line)
+        self.talk.say("muse", "voice", line)
+        for link in list(self.devices.values()):
+            link.voice.announce(text=line, moves=["wave"], sign="Reminder", secs=20,
+                                alert=short(reminder["text"], 18), log=False)
+        if not self.devices:
+            muse_world.missed_reminders(add=reminder["text"])
+
+    def catch_up(self, link):
+        """Muse has just connected: say the reminders that came up while it was away."""
+        if link.writer not in self.devices:
+            return
+        missed = muse_world.missed_reminders()
+        if missed:
+            muse_world.missed_reminders(clear=True)
+            line = "While I was away, you had %s: %s." % (
+                "a reminder" if len(missed) == 1 else "%d reminders" % len(missed), "; ".join(missed))
+            link.voice.announce(text=line, moves=["wave"], sign="Reminder", secs=20,
+                                alert=short(missed[0], 18), log=False)
+
     def on_awake(self, link):
-        """Muse was picked up or woken: the first time in a morning, it says hello."""
+        """Muse was picked up or woken: the first time in a morning it says good morning,
+        with today's reminders and any research that is ready."""
         opts = muse_voice.options()
         if opts["speak_first"] and muse_voice.read_key() and muse_world.greeting_due(opts["timezone"]):
-            log("good morning")
-            link.voice.announce(note=muse_world.GREETING_NOTE)
+            missed = muse_world.missed_reminders()
+            muse_world.missed_reminders(clear=True)
+            note = muse_world.briefing_note(self.reminders.today(), missed,
+                                            muse_world.finished_since_briefing(self.jobs.list(), mark=True))
+            log("good morning" + (" (with a briefing)" if note != muse_world.GREETING_NOTE else ""))
+            link.voice.announce(note=note)
 
     def claude_summary(self):
         """What Claude Code is up to, for Muse to talk about."""
@@ -352,6 +383,7 @@ class Hub:
         for text in self.missed:
             link.send_json({"type": "alert", "text": short(text, 18)})
         self.missed = []
+        asyncio.get_event_loop().call_later(8, self.catch_up, link)   # once it has said hello
         try:
             while True:
                 op, data = await ws.read_message(reader, writer, frame_timeout=60)  # Muse pings every 10 s
@@ -569,7 +601,7 @@ async def handle(hub, reader, writer):
             await hub.serve_device(reader, writer, peer)
             return
 
-        if path in ("/app.json", "/feed.json", "/ask", "/chat", "/memory"):
+        if path in ("/app.json", "/feed.json", "/ask", "/chat", "/memory", "/reminders"):
             # The web app's private side: Muse's state, new requests, its memory.
             if not (authorized(hub, headers) if hub.token else (method == "GET" or is_loopback(peer))):
                 respond(writer, "401 Unauthorized")
@@ -602,6 +634,8 @@ async def handle(hub, reader, writer):
             elif path == "/ask":
                 result = hub.start_job(body.get("task"), body.get("title") or "")
                 log("asked from the web app ->", result)
+            elif path == "/reminders":
+                result = hub.reminders.cancel(body.get("cancel"))
             elif body.get("forget"):
                 result = muse_world.forget_note(body["forget"])
             else:
@@ -730,7 +764,7 @@ async def serve(port, pair=None):
         log("pairing: the Muse that connects will be told %s" % (
             "to use " + pair["url"] if pair["url"] else "to forget the online server"))
     log("waiting for Muse and for Claude Code hooks; Ctrl-C to stop")
-    tasks = [asyncio.ensure_future(keepalive(hub))]  # keep references
+    tasks = [asyncio.ensure_future(keepalive(hub)), asyncio.ensure_future(hub.reminders.run())]  # keep references
     if not token:
         tasks.append(asyncio.ensure_future(beacon(hub, port)))  # Muse finds a local server by itself
     async with server:

@@ -24,8 +24,8 @@ words (InjectUserMessage). "speak_first": false in voice.json turns this off.
 
 The AI has Muse's body and screen as tools (see TOOLS below): muse_do performs
 moves, muse_show puts up a sign, muse_set changes brightness and volume,
-muse_status reads Muse's own sensors, time_now, timer, remember and forget
-(muse_world.py) give it the time, timers and a memory, claude_status reports
+muse_status reads Muse's own sensors, time_now, timer, reminder, remember and
+forget (muse_world.py) give it the time, timers, reminders and a memory, claude_status reports
 what Claude Code is doing, and work_on hands bigger work (web research and a
 write-up) to a background job (muse_jobs.py); work_status says how that went.
 
@@ -89,9 +89,10 @@ DEFAULTS = {
         "moves in one call. Use muse_show to put a few words on your screen as a sign, and muse_set "
         "when asked to change your brightness or volume. Say a short line along with any tool call. "
         "You can sense things: call muse_status for your battery, WiFi, how you are sitting and how "
-        "noisy the room is, and time_now for the time or date; never guess those. Use timer when "
-        "asked to time or remind, and remember when the user tells you something about themselves "
-        "worth keeping, such as their name or what they like. "
+        "noisy the room is, and time_now for the time or date; never guess those. Use timer for a "
+        "short countdown, and reminder when asked to remind them of something at a time or on a "
+        "later day, once or repeating. Use remember when the user tells you something about "
+        "themselves worth keeping, such as their name or what they like. "
         "You cannot look things up yourself. When the user wants research, a comparison, options to "
         "choose from, or anything that needs current information from the web, call work_on with a "
         "complete, self-contained task and tell them you are on it and will say when it is ready; it "
@@ -183,6 +184,30 @@ TOOLS = [
                 "minutes": {"type": "number", "description": "For set: how long from now; 0.5 is thirty seconds."},
                 "label": {"type": "string", "description": "A word or two shown when it is up, such as Tea. "
                                                            "For cancel: which one (empty cancels all)."},
+            },
+            "required": ["action"],
+        },
+    },
+    {
+        "name": "reminder",
+        "description": "Remind the user of something at a clock time or on a later day, once or repeating. "
+                       "Muse says it out loud when the time comes, and reminders are kept across restarts. "
+                       "Use timer instead for a short countdown with no message. To set one, give text and "
+                       "either time (with date if it is not today) or in_minutes. Tell the user the 'when' "
+                       "that comes back.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["set", "list", "cancel"]},
+                "text": {"type": "string", "description": "For set: what to remind them of, such as 'call mum'. "
+                                                          "For cancel: words from the reminder, or 'all'."},
+                "time": {"type": "string", "description": "For set: the time in the user's time zone as 24-hour "
+                                                          "HH:MM, such as 17:00. A time already past today means "
+                                                          "tomorrow."},
+                "date": {"type": "string", "description": "For set: the day as YYYY-MM-DD, if not today. For a "
+                                                          "weekly reminder, a date that falls on its weekday."},
+                "in_minutes": {"type": "number", "description": "For set, instead of time: how long from now."},
+                "repeat": {"type": "string", "enum": ["none", "daily", "weekdays", "weekly"]},
             },
             "required": ["action"],
         },
@@ -399,6 +424,17 @@ def run_tool(name, args, hub, body, via):
         else:
             result = hub.timers.list()
         log("%s: timer" % via, action, "->", result)
+        return json.dumps(result)
+    if name == "reminder":
+        action = args.get("action")
+        if action == "set":
+            result = hub.reminders.set(args.get("text"), args.get("time") or "", args.get("date") or "",
+                                       args.get("in_minutes"), args.get("repeat") or "")
+        elif action == "cancel":
+            result = hub.reminders.cancel(args.get("text"))
+        else:
+            result = hub.reminders.list()
+        log("%s: reminder" % via, action, "->", result)
         return json.dumps(result)
     if name == "remember":
         result = muse_world.remember(args.get("note") or "")

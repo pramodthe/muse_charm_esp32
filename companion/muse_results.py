@@ -9,6 +9,7 @@
     POST /chat                {"text": "..."} a typed message; Muse answers (muse_chat.py)
     POST /ask                 {"task": "..."} starts a background job directly
     POST /memory              {"add": "..."} or {"forget": "..."}
+    POST /reminders           {"cancel": "<id>"}
     GET  /avatar              your own picture for Muse, if there is a companion/avatar.webp
                               (or .gif, .png, .jpg); it is the browser tab's icon too
 
@@ -223,6 +224,7 @@ PAGE = r"""<!doctype html>
   <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5"/></symbol>
   <symbol id="i-next" viewBox="0 0 24 24"><path d="m9.5 6 6 6-6 6"/></symbol>
   <symbol id="i-x" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6.5 16.5V11a5.5 5.5 0 0 1 11 0v5.5l1.5 2H5l1.5-2ZM10 20.5a2.2 2.2 0 0 0 4 0"/></symbol>
   <symbol id="i-again" viewBox="0 0 24 24"><path d="M5 12a7 7 0 1 1 2.2 5.1M5 18v-4h4"/></symbol>
 </svg>
 <div class="app">
@@ -253,6 +255,7 @@ const IDEAS = [
 ];
 const SAY = [
   ["Set a timer for five minutes for tea", "Says so when it is up, and waves"],
+  ["Remind me at five to call mum", "Says it out loud when it is time"],
   ["Remember that I like green tea", "Keeps it, and uses it later"],
   ["How's your battery?", "Reads its own sensors"],
   ["Dance for me", "Dances, with music"],
@@ -428,8 +431,15 @@ function drawIdeas() {
 
 function drawMemory() {
   if (!app) return signIn("What Muse remembers about you is private.");
-  const notes = app.memory || [];
-  return `<h1>Memory</h1><p class="lede">What Muse remembers about you. It uses these when you talk, and hands them to its research.</p>
+  const notes = app.memory || [], reminders = app.reminders || [];
+  return `<h1>Memory</h1><p class="lede">What Muse is keeping for you: reminders it will say out loud, and what it remembers about you.</p>
+    <h2>Reminders</h2>
+    <div class="group">${reminders.length ? reminders.map(r => `<div class="item"><span class="tile">${icon("i-bell")}</span>
+      <span class="words"><b>${esc(r.text)}</b><span>${esc(sentence(r.when))}</span></span>
+      <button class="round" data-cancel="${esc(r.id)}" aria-label="Cancel the reminder: ${esc(r.text)}">${icon("i-x")}</button></div>`).join("")
+      : `<p class="empty">No reminders. Ask Muse, out loud or in the chat: "remind me at 5 pm to call mum".</p>`}</div>
+    <h2>What Muse remembers about you</h2>
+    <p class="lede" style="margin:0 12px 4px">It uses these when you talk, and hands them to its research.</p>
     <form class="addrow" id="addform"><input class="field" id="note" aria-label="Something for Muse to remember" maxlength="160"
       placeholder="Something for Muse to remember"><button class="solid">Remember</button></form>
     <p class="status" id="memnote" aria-live="polite">${notice}</p>
@@ -476,7 +486,7 @@ async function draw() {
   const tab = where === "ideas" || where === "memory" ? where : "activity";
   let html, key;
   if (tab === "ideas") { key = "ideas"; html = drawIdeas(); }
-  else if (tab === "memory") { key = "memory" + JSON.stringify(app && app.memory) + notice; html = drawMemory(); }
+  else if (tab === "memory") { key = "memory" + JSON.stringify(app && [app.memory, app.reminders]) + notice; html = drawMemory(); }
   else {
     const last = messages[messages.length - 1] || {};
     key = "activity" + canRead + Boolean(app) + pending + messages.length + (last.text || "").length +
@@ -552,6 +562,9 @@ document.addEventListener("click", async e => {
     await call("/memory", {forget: text}).catch(() => {});
     notice = `Forgotten. <button class="link" data-undo="${esc(text)}">Undo</button>`;
     await refresh();
+  } else if (b.dataset.cancel) {
+    await call("/reminders", {cancel: b.dataset.cancel}).catch(() => {});
+    notice = ""; await refresh();
   } else if (b.dataset.undo) { await call("/memory", {add: b.dataset.undo}).catch(() => {}); notice = ""; await refresh(); }
 });
 
