@@ -36,13 +36,16 @@ TIMEOUT_S = 30
 QUESTION_MAX = 400
 ANSWER_MAX = 600
 SOURCES_MAX = 3
+MAX_TOKENS = 1500     # the model thinks a little first, and that counts too
+EFFORT = "low"        # how hard it thinks: low answers a quick question in 2 to 6 seconds
 
 INSTRUCTIONS = (
     "You answer one question for Muse, a small voice companion on the user's desk. Search the web "
     "for current information, using as few searches as you can, then reply with only the answer: "
-    "one to three short, plain sentences that will be spoken aloud. Put the answer first, with the "
-    "numbers, names and times that matter. No markdown, lists, links, source names in brackets or "
-    "remarks about searching. If the sources disagree or you could not find it, say so in a sentence."
+    "one or two short, plain sentences (three at most) that will be spoken aloud. Put the answer "
+    "first, with the numbers, names and times that matter, in the units and currency people use "
+    "where the user is. No markdown, lists, links, source names in brackets or remarks about "
+    "searching. If the sources disagree or you could not find it, say so in a sentence."
 )
 
 
@@ -91,19 +94,25 @@ def _site(url):
 
 def read_answer(content):
     """(answer, sources) from the API's content blocks: the text after the last
-    search, and the pages it cites ({"title", "url", "site"})."""
-    last_search = max((i for i, b in enumerate(content) if b.get("type") == "web_search_tool_result"), default=-1)
+    search, and the pages it cites ({"title", "url", "site"}). An answer that
+    cites nothing gets the first pages its last search found."""
+    searches = [i for i, b in enumerate(content) if b.get("type") == "web_search_tool_result"]
     texts, sources, seen = [], [], set()
-    for block in content[last_search + 1:]:
-        if block.get("type") != "text":
-            continue
-        texts.append(block.get("text", ""))
-        for c in block.get("citations") or []:
-            url = c.get("url") or ""
-            if url.startswith(("http://", "https://")) and url not in seen and len(sources) < SOURCES_MAX:
-                seen.add(url)
-                sources.append({"title": " ".join(str(c.get("title") or _site(url)).split())[:120],
-                                "url": url, "site": _site(url)})
+
+    def add(url, title):
+        url = str(url or "")
+        if url.startswith(("http://", "https://")) and url not in seen and len(sources) < SOURCES_MAX:
+            seen.add(url)
+            sources.append({"title": " ".join(str(title or _site(url)).split())[:120], "url": url, "site": _site(url)})
+
+    for block in content[(searches[-1] + 1 if searches else 0):]:
+        if block.get("type") == "text":
+            texts.append(block.get("text", ""))
+            for c in block.get("citations") or []:
+                add(c.get("url"), c.get("title"))
+    if not sources and searches and isinstance(content[searches[-1]].get("content"), list):
+        for found in content[searches[-1]]["content"][:2]:
+            add(found.get("url"), found.get("title"))
     return _clean("".join(texts)), sources
 
 
@@ -157,14 +166,17 @@ def look_up(question, model, zone="", place="", notes=(), searches=3):
     try:
         for _ in range(3):
             messages = [asked] + ([{"role": "assistant", "content": so_far}] if so_far else [])
-            answer = _ask(key, {"model": model, "max_tokens": 500, "system": system,
-                                "messages": messages, "tools": [search]})
+            answer = _ask(key, {"model": model, "max_tokens": MAX_TOKENS, "system": system,
+                                "messages": messages, "tools": [search], "output_config": {"effort": EFFORT}})
             so_far = so_far + (answer.get("content") or [])
             if answer.get("stop_reason") != "pause_turn":   # a long turn is paused: carry on where it stopped
                 break
         text, sources = read_answer(so_far)
     except RuntimeError as e:
         return {"ok": False, "error": str(e)}
+    if answer.get("stop_reason") == "max_tokens":
+        log("look_up: the answer was cut off at %d tokens" % MAX_TOKENS)
+        text = text.rsplit(". ", 1)[0] + "." if ". " in text else ""   # keep the whole sentences
     if not text:
         return {"ok": False, "error": "no answer came back"}
     return {"ok": True, "answer": text, "sources": sources}

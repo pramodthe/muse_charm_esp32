@@ -199,8 +199,9 @@ def messages_from(history):
 
 
 def ask_api(key, model, system, messages):
-    body = json.dumps({"model": model, "max_tokens": 700, "system": system, "messages": messages,
-                       "tools": tools()}).encode()
+    # The model thinks a little before it answers, and that counts towards max_tokens: leave room.
+    body = json.dumps({"model": model, "max_tokens": 1500, "system": system, "messages": messages,
+                       "tools": tools(), "output_config": {"effort": "low"}}).encode()
     req = urllib.request.Request(API_URL, data=body, headers={
         "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"})
     try:
