@@ -293,7 +293,8 @@ class Reminders:
 
     def __init__(self, fire, zone=lambda: ""):
         self.fire = fire
-        self.said = []     # the last few that came due, for the AI: (text, time.time)
+        # The last few that came due, for the AI: [text, time.time]. Kept across restarts.
+        self.said = [x for x in _state().get("said", []) if isinstance(x, list) and len(x) == 2][-5:]
         self.zone = zone   # the user's time zone, asked for each time (voice.json can change)
         try:
             with open(REMINDERS_FILE) as f:
@@ -370,10 +371,15 @@ class Reminders:
         return {"reminders": [{"id": r["id"], "text": r["text"], "when": self.when(r)}
                               for r in sorted(self.items, key=lambda r: r["at"])]}
 
+    def _said_when(self, at):
+        day = self._local(at)
+        today = now(self.zone()).date()
+        return ("today" if day.date() == today else day.strftime("on %A")) + " at " + clock(day)
+
     def for_ai(self):
         """What the AI is told when it asks which reminders there are."""
         return {"reminders": [{"text": r["text"], "when": self.when(r)} for r in sorted(self.items, key=lambda r: r["at"])],
-                "already_said": [{"text": text, "said_at": clock(self._local(at))} for text, at in self.said],
+                "already_said": [{"text": text, "said": self._said_when(at)} for text, at in self.said],
                 "note": "A reminder that does not repeat leaves this list once Muse has said it out loud; "
                         "one that is missing was delivered, not lost."}
 
@@ -404,7 +410,8 @@ class Reminders:
             else:
                 self.items.remove(r)
             if late < LATE_S:
-                self.said = (self.said + [(r["text"], time.time())])[-5:]
+                self.said = (self.said + [[r["text"], time.time()]])[-5:]
+                _keep("said", self.said)
                 self.fire(r, late > 120)
         if due:
             self._save()
