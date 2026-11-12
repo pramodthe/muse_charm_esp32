@@ -8,7 +8,7 @@ key stays on this computer.
 
     Muse  -> {"type":"talk_start"}, microphone audio (binary), {"type":"talk_end"}
              {"type":"talk_stop"}                      stop the reply that is playing
-    Muse <-  {"type":"voice","state":"thinking|speaking|done|error"}
+    Muse <-  {"type":"voice","state":"thinking|speaking|done|error|looking|looked"}
              {"type":"voice","do":["wave","dance"]}   moves to perform, in order
              {"type":"voice","show":"BRB","secs":8}   a sign at the top of the screen
              {"type":"voice","set":{"volume":40}}     brightness and volume, in percent
@@ -26,8 +26,11 @@ The AI has Muse's body and screen as tools (see TOOLS below): muse_do performs
 moves, muse_show puts up a sign, muse_set changes brightness and volume,
 muse_status reads Muse's own sensors, time_now, timer, reminder, remember and
 forget (muse_world.py) give it the time, timers, reminders and a memory, claude_status reports
-what Claude Code is doing, and work_on hands bigger work (web research and a
+what Claude Code is doing, look_up answers a quick question from the web in a
+few seconds (muse_lookup.py), and work_on hands bigger work (web research and a
 write-up) to a background job (muse_jobs.py); work_status says how that went.
+While a lookup runs, Muse is told {"type":"voice","state":"looking"} and then
+"looked", so it keeps thinking after "let me check" instead of going quiet.
 
 Muse's voice is the Deepgram voice raised in pitch (and a little faster), so
 it sounds like the same small creature that chirps.
@@ -47,6 +50,7 @@ import sys
 import time
 
 import muse_env
+import muse_lookup
 import muse_world
 import muse_ws as ws
 
@@ -74,6 +78,10 @@ DEFAULTS = {
     "speak_first": True,      # timers, a low battery and "good morning" are said aloud
     "worker_model": "anthropic:claude-sonnet-5-5",   # the model that does background jobs
     "chat_model": "claude-haiku-5-5",                # the model that answers typed messages (muse_chat.py)
+    "lookup_model": "claude-haiku-5-5",              # the model that looks up quick answers (muse_lookup.py)
+    "lookup_searches": 3,     # web searches one quick question may use
+    "place": "",              # where you are, such as "Sydney, Australia", for the weather and local
+                              # questions; empty: the city in the time zone's name
     "listen_model": "nova-3",
     "think_provider": "anthropic",
     "think_model": "claude-haiku-4-5",
@@ -94,11 +102,14 @@ DEFAULTS = {
         "short countdown, and reminder when asked to remind them of something at a time or on a "
         "later day, once or repeating. Use remember when the user tells you something about "
         "themselves worth keeping, such as their name or what they like. "
-        "You cannot look things up yourself. When the user wants research, a comparison, options to "
-        "choose from, or anything that needs current information from the web, call work_on with a "
-        "complete, self-contained task and tell them you are on it and will say when it is ready; it "
-        "takes a few minutes in the background. Call work_status when they ask how that is going or "
-        "what you found, and answer from its summary in a sentence or two. "
+        "For a quick fact from the web, such as the weather, the news, a score, opening hours, a "
+        "price or anything else that may have changed, call look_up with a complete question and say "
+        "a short line such as 'Let me check!' as you call it; the answer comes back in a few seconds, "
+        "and you then say it in a sentence or two. Never guess current facts. When the user wants "
+        "research, a comparison, options to choose from or a write-up, call work_on with a complete, "
+        "self-contained task and tell them you are on it and will say when it is ready; it takes a "
+        "few minutes in the background. Call work_status when they ask how that is going or what you "
+        "found, and answer from its summary in a sentence or two. "
         "Claude Code, an AI coding assistant, often works on the same computer; if the user asks what "
         "Claude is doing or how their work is going, call claude_status and answer in a sentence."
     ),
@@ -225,11 +236,26 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {"about": {"type": "string"}}, "required": ["about"]},
     },
     {
+        "name": "look_up",
+        "description": "Look up a quick answer on the web: the weather, news, a score, opening hours, a "
+                       "price, a fact that may have changed. Takes a few seconds and returns a short answer "
+                       "to say in your own words. Use work_on instead for research that needs a write-up.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "question": {"type": "string", "description": "The whole question, with the place and day "
+                                                              "if they matter, such as 'Will it rain in "
+                                                              "Sydney this afternoon?'"},
+            },
+            "required": ["question"],
+        },
+    },
+    {
         "name": "work_on",
         "description": "Hand a bigger job to your background worker, which can search and read the web "
-                       "for a few minutes and writes up what it finds. Use it for research, comparisons, "
-                       "recommendations and current facts. It returns at once; you tell the user you are "
-                       "on it, and you will announce the result yourself when it is ready.",
+                       "for a few minutes and writes up what it finds. Use it for research, comparisons "
+                       "and recommendations; a single quick fact is look_up. It returns at once; you tell "
+                       "the user you are on it, and you will announce the result yourself when it is ready.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -457,7 +483,37 @@ def run_tool(name, args, hub, body, via):
         content = hub.claude_summary()
         log("%s: claude_status ->" % via, content)
         return content
+    if name in SLOW_TOOLS:
+        return json.dumps({"error": "%s takes a few seconds; it goes through run_tool_async" % name})
     return json.dumps({"error": "unknown function"})
+
+
+SLOW_TOOLS = ("look_up",)   # tools that wait on the network: run off the event loop (run_tool_async)
+
+
+async def run_tool_async(name, args, hub, body, via):
+    """run_tool(), for any tool: one that waits on the network (look_up) runs in a
+    thread, so Muse's audio and the other conversations keep going meanwhile."""
+    if name != "look_up":
+        return run_tool(name, args, hub, body, via)
+    opts = options()
+    question = " ".join(str(args.get("question") or "").split())
+    started = time.monotonic()
+    result = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: muse_lookup.look_up(question, opts["lookup_model"], opts["timezone"], opts["place"],
+                                          muse_world.notes(), opts["lookup_searches"]))
+    took = time.monotonic() - started
+    if not result.get("ok"):
+        log("%s: look_up %r failed after %.1f s: %s" % (via, question[:80], took, result.get("error")))
+        return json.dumps({"ok": False, "error": result.get("error"),
+                           "note": "Tell the user in one sentence that you could not look it up just now. "
+                                   "Do not guess the answer."})
+    log("%s: look_up %r -> %s (%.1f s, %s)" % (via, question[:80], result["answer"][:120], took,
+                                               ", ".join(s["site"] for s in result["sources"]) or "no sources"))
+    hub.talk.lookup(question, result["sources"])    # the web app shows where it came from
+    return json.dumps({"ok": True, "answer": result["answer"],
+                       "sources": [s["site"] for s in result["sources"]],
+                       "note": "Say this in your own short words. You may name a source if it helps."})
 
 
 class Voice:
@@ -810,7 +866,22 @@ class Voice:
             args = json.loads(f.get("arguments") or "{}")
         except ValueError:
             args = {}
-        content = run_tool(name, args if isinstance(args, dict) else {}, self.link.hub, self, "voice")
+        args = args if isinstance(args, dict) else {}
+        if name in SLOW_TOOLS:
+            self.tasks.append(asyncio.ensure_future(self._slow_function(f, name, args)))
+            return
+        content = run_tool(name, args, self.link.hub, self, "voice")
+        self._send_json({"type": "FunctionCallResponse", "id": f.get("id"), "name": name, "content": content})
+
+    async def _slow_function(self, f, name, args):
+        # Muse keeps its thought cloud up from here (after "let me check", if it says that)
+        # until the answer starts; firmware from before this ignores these two.
+        self.link.send_json({"type": "voice", "state": "looking"})
+        try:
+            content = await run_tool_async(name, args, self.link.hub, self, "voice")
+        finally:
+            self.link.send_json({"type": "voice", "state": "looked"})
+        self.last_activity = time.monotonic()
         self._send_json({"type": "FunctionCallResponse", "id": f.get("id"), "name": name, "content": content})
 
     # What the tools do to Muse in a spoken conversation (see run_tool).

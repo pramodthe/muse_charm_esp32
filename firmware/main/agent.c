@@ -7,6 +7,9 @@
 //   hold again       -> {"type":"talk_stop"} to stop the reply, then a new turn
 //   server           -> {"type":"voice_ready","on":true}  a Deepgram key is set up
 //                       {"type":"voice","state":"thinking|speaking|done|error"}
+//                       {"type":"voice","state":"looking"} / "looked"  the AI is looking
+//                       something up on the web: keep thinking after the line it
+//                       says meanwhile ("let me check"), until the answer comes
 //                       {"type":"voice","do":["wave","dance"]}  moves to perform (the AI's tools)
 //                       {"type":"voice","show":"BRB","secs":8}  a sign on the screen
 //                       {"type":"voice","set":{"brightness":40,"volume":80}}
@@ -51,6 +54,7 @@ static const char *TAG = "agent";
 #define SPEECH_BUFFER_BYTES (256 * 1024)  // ~8 s; the server sends at most ~2.5 s ahead
 #define SEND_CHUNK 1280                   // 40 ms
 #define REPLY_TIMEOUT_MS 20000            // nothing back after release: give up
+#define LOOKUP_MAX_MS 45000               // a lookup longer than this is not waited for
 #define SPEECH_DONE_GAP_MS 300
 #define BYTES_PER_MS 32                   // 16 kHz, 16-bit
 #define SUB_LINE 26                       // characters that fit on the caption line
@@ -70,6 +74,8 @@ static volatile bool s_available;  // linked, and the server has a Deepgram key
 static volatile bool s_turn_active, s_discard, s_audio_done;
 static volatile bool s_start_due, s_end_due, s_stop_due;
 static volatile int64_t s_turn_end_ms;
+static volatile bool s_looking;           // the server is looking something up for this reply
+static volatile int64_t s_looking_since_ms;
 
 // Subtitles: sentences of the reply, shown as their audio plays.
 static QueueHandle_t s_sentences;
@@ -97,6 +103,7 @@ static void fail(const char *why)
 {
     ESP_LOGW(TAG, "%s", why);
     s_turn_active = false;
+    s_looking = false;
     s_discard = true;
     g_muse.agent_error = true;
     set_state(s_available ? MUSE_AGENT_IDLE : MUSE_AGENT_OFF);
@@ -140,19 +147,28 @@ static void agent_task(void *arg)
                      (long long)s_slowest_send_ms);
         }
 
-        // The reply is finished once the server says so and playback has drained.
+        // The reply is finished once the server says so and playback has drained,
+        // unless the server is still looking something up: then Muse thinks
+        // again until the answer comes.
         const int state = g_muse.agent_state;
+        const bool looking = s_looking && now - s_looking_since_ms < LOOKUP_MAX_MS;
         if (state == MUSE_AGENT_SPEAKING) {
             if (s_audio_done && xStreamBufferIsEmpty(s_speech)) {
                 if (!speech_empty_since) {
                     speech_empty_since = now;
                 } else if (now - speech_empty_since > SPEECH_DONE_GAP_MS) {
-                    set_state(MUSE_AGENT_IDLE);
+                    speech_empty_since = 0;
+                    if (looking) {
+                        s_turn_end_ms = now;
+                        set_state(MUSE_AGENT_THINKING);
+                    } else {
+                        set_state(MUSE_AGENT_IDLE);
+                    }
                 }
             } else {
                 speech_empty_since = 0;
             }
-        } else if (state == MUSE_AGENT_THINKING && now - s_turn_end_ms > REPLY_TIMEOUT_MS) {
+        } else if (state == MUSE_AGENT_THINKING && !looking && now - s_turn_end_ms > REPLY_TIMEOUT_MS) {
             fail("no reply from the computer");
         }
     }
@@ -273,6 +289,17 @@ void agent_on_voice(const cJSON *msg)
         set_state(MUSE_AGENT_SPEAKING);
     } else if (strcmp(state, "done") == 0) {
         s_audio_done = true;
+    } else if (strcmp(state, "looking") == 0) {
+        ESP_LOGI(TAG, "looking something up");
+        s_looking_since_ms = muse_now_ms();
+        s_looking = true;
+        if (g_muse.agent_state != MUSE_AGENT_SPEAKING) {
+            s_turn_end_ms = muse_now_ms();
+            set_state(MUSE_AGENT_THINKING);
+        }
+    } else if (strcmp(state, "looked") == 0) {
+        s_looking = false;
+        s_turn_end_ms = muse_now_ms();  // the answer is due from now
     }
 }
 
@@ -316,6 +343,7 @@ bool agent_begin_turn(void)
         return false;
     }
     s_discard = true;  // stop any reply that is still playing
+    s_looking = false;
     s_end_due = false;
     s_turn_active = true;
     s_start_due = true;
@@ -395,7 +423,7 @@ bool agent_move_waiting(void)
 
 void agent_done_waiting(void)
 {
-    if (g_muse.agent_state == MUSE_AGENT_THINKING) {
+    if (g_muse.agent_state == MUSE_AGENT_THINKING && !s_looking) {  // an answer is still on its way
         set_state(MUSE_AGENT_IDLE);
     }
 }

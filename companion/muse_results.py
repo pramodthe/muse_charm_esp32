@@ -106,7 +106,10 @@ PAGE = r"""<!doctype html>
   .remove:hover { background: var(--danger-bg); }
   .time { font-size: 11px; line-height: 16px; color: var(--faint); margin: 3px 8px 0; }
   .doing { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; line-height: 20px; margin: 6px 12px; }
-  .doing svg { width: 17px; height: 17px; }
+  .doing svg { width: 17px; height: 17px; flex: none; }
+  .looked { font-size: 12px; line-height: 16px; margin: 2px 12px; }
+  .looked a { color: var(--link); text-decoration: none; }
+  .looked a:hover { text-decoration: underline; }
   .dots { display: inline-flex; gap: 4px; padding: 15px 16px; }
   .dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); animation: hop 1.3s ease-in-out infinite; }
   .dots i:nth-child(2) { animation-delay: 0.16s; } .dots i:nth-child(3) { animation-delay: 0.32s; }
@@ -259,6 +262,7 @@ const IDEAS = [
   "What are the best ways to make a small ESP32 gadget last longer on its battery?",
 ];
 const SAY = [
+  ["Will it rain this afternoon?", "Looks it up on the web, and tells you in a few seconds"],
   ["Set a timer for five minutes for tea", "Says so when it is up, and waves"],
   ["Remind me at five to call mum", "Says it out loud when it is time"],
   ["Remember that I like green tea", "Keeps it, and uses it later"],
@@ -392,6 +396,13 @@ function jobReply(j, onIt) {
   return `<div class="msg muse">${reply}</div>`;
 }
 
+// Muse looked something up on the web: where the answer came from, as links to the pages.
+const lookedUp = e => {
+  const links = (e.sources || []).filter(s => /^https?:\/\//.test(s.url))
+    .map(s => `<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer" title="${esc(s.title)}">${esc(s.site || s.url)}</a>`);
+  return `<p class="doing looked">${icon("i-search")}<span>Looked it up${links.length ? ": " + links.join(", ") : ""}</span></p>`;
+};
+
 // A message that is in the conversation can be picked (tap it) and then removed.
 const pickable = t => app && t != null ? ` data-t="${t}" tabindex="0"` + (t === picked ? ' class="bubble picked"' : ' class="bubble"') : ' class="bubble"';
 const remover = t => app && t != null && t === picked ? `<button class="remove" data-remove="${t}">Remove from the chat</button>` : "";
@@ -421,6 +432,7 @@ function drawActivity() {
     const d = dayOf(e.t);
     if (d !== day) { html += `<p class="day">${d}</p>`; day = d; }
     if (e.job) html += byId[e.job] ? jobReply(byId[e.job], e.onIt) : "";
+    else if (e.lookup) html += lookedUp(e);
     else if (e.who === "you") html += mine(e.text, e.t, e.via === "voice", e.via != null);
     else html += `<div class="msg muse"><div${pickable(e.t)}>${esc(e.text)}</div>${remover(e.t)}</div>`;
   }

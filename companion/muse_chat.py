@@ -9,6 +9,8 @@ recent part of it, so each knows what happened in the other.
     {"t": 1794400000.0, "who": "you" | "muse", "via": "voice" | "web",
      "text": "..."}            something said or typed
     {"t": ..., "who": "muse", "job": "<id>"}   a background job was started
+    {"t": ..., "who": "muse", "lookup": "...", "sources": [{"title", "url", "site"}]}
+                                                Muse looked something up (muse_lookup.py)
 
 reply() answers a typed message. It asks Claude through the Anthropic API
 (with the same key as the background jobs), with the same tools the voice has
@@ -53,9 +55,11 @@ PROMPT = (
     "WiFi, how you are sitting and how noisy the room is, and time_now for the time or date; never "
     "guess those. Use timer for a short countdown, and reminder when asked to remind them of something "
     "at a time or on a later day, once or repeating. Use remember when the user tells you "
-    "something about themselves worth keeping. You cannot look things up yourself. When the user "
-    "wants research, a comparison, options to choose from, or anything that needs current information "
-    "from the web, call work_on with a complete, self-contained task and tell them you are on it; it "
+    "something about themselves worth keeping. For a quick fact from the web (the weather, news, a "
+    "score, opening hours, a price, anything that may have changed), call look_up with a complete "
+    "question and answer from what comes back; never guess current facts, and do not add links (the "
+    "chat shows the sources). When the user wants research, a comparison, options to choose from or "
+    "a write-up, call work_on with a complete, self-contained task and tell them you are on it; it "
     "takes a few minutes, the write-up then appears in this chat, and you announce it out loud on the "
     "desk. Call work_status when they ask how that is going or what you found. If the user asks what "
     "Claude Code is doing, call claude_status. Earlier messages show only the words that were said, "
@@ -127,6 +131,13 @@ class Conversation:
         self.items = [e for e in self.items if e.get("t") not in times]
         self._save()
         return {"ok": True, "removed": before - len(self.items)}
+
+    def lookup(self, question, sources):
+        """Add that Muse looked something up, with the pages the answer came from."""
+        self.items.append({"t": time.time(), "who": "muse", "lookup": " ".join(str(question).split())[:300],
+                           "sources": [{k: s.get(k, "") for k in ("title", "url", "site")} for s in sources][:3]})
+        self.items = self.items[-KEEP:]
+        self._save()
 
     def job(self, job_id):
         """Add that Muse started a background job."""
@@ -205,9 +216,12 @@ def ask_api(key, model, system, messages):
         raise RuntimeError("could not reach the model (%s)" % (getattr(e, "reason", None) or type(e).__name__))
 
 
-def fake(hub, text):
+async def fake(hub, text):
     """A stand-in for the model, for tests."""
     low = text.lower()
+    if "look up" in low:
+        found = json.loads(await muse_voice.run_tool_async("look_up", {"question": text}, hub, HubBody(hub), "web"))
+        return found.get("answer") or "I could not look that up just now."
     if "dance" in low:
         muse_voice.run_tool("muse_do", {"moves": ["dance"]}, hub, HubBody(hub), "web")
     if "research" in low:
@@ -229,7 +243,7 @@ async def reply(hub, text):
     hub.talk.say("you", "web", text)
     try:
         if os.environ.get("MUSE_CHAT_FAKE"):
-            answer = fake(hub, text)
+            answer = await fake(hub, text)
         else:
             answer = await _converse(hub, key)
     except RuntimeError as e:
@@ -261,5 +275,6 @@ async def _converse(hub, key):
         messages.append({"role": "assistant", "content": content})
         messages.append({"role": "user", "content": [
             {"type": "tool_result", "tool_use_id": c["id"],
-             "content": muse_voice.run_tool(c.get("name"), c.get("input") or {}, hub, body, "web")} for c in calls]})
+             "content": await muse_voice.run_tool_async(c.get("name"), c.get("input") or {}, hub, body, "web")}
+            for c in calls]})
     return " ".join(s.strip() for s in said if s.strip())
