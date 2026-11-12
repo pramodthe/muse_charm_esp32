@@ -373,6 +373,9 @@ def settings_message(opts, history):
     # it was asked to remember.
     t = muse_world.time_report(opts["timezone"])
     prompt = opts["prompt"] + " It is %s, %s, around %s." % (t["weekday"], t["date"], t["time"])
+    here = muse_lookup.place_name(opts["timezone"], opts["place"])
+    if here:
+        prompt += " The user is in or near %s." % here
     notes = muse_world.notes()
     if notes:
         prompt += " What you remember about the user: " + " ".join("- %s" % n for n in notes)

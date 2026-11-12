@@ -66,6 +66,12 @@ def _zone(zone):
     return ""
 
 
+def place_name(zone, place):
+    """Where the user is, in words: the place from voice.json, else the city in the time zone's name."""
+    zone = _zone(zone)
+    return (place or "").strip() or (zone.rsplit("/", 1)[-1].replace("_", " ") if zone else "")
+
+
 def where(zone, place):
     """The search's user_location: the place from voice.json, else the city in the time zone's name."""
     zone = _zone(zone)

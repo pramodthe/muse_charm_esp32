@@ -28,6 +28,7 @@ import urllib.error
 import urllib.request
 
 import muse_jobs
+import muse_lookup
 import muse_voice
 import muse_world
 
@@ -261,6 +262,9 @@ async def _converse(hub, key):
     opts = muse_voice.options()
     t = muse_world.time_report(opts["timezone"])
     system = PROMPT + " It is %s, %s, around %s." % (t["weekday"], t["date"], t["time"])
+    here = muse_lookup.place_name(opts["timezone"], opts["place"])
+    if here:
+        system += " The user is in or near %s." % here
     notes = muse_world.notes()
     if notes:
         system += " What you remember about the user: " + " ".join("- %s" % n for n in notes)
