@@ -56,7 +56,7 @@ static void watchdog_task(void *arg)
         const uint32_t now = g_face_ticks;
         quiet = now == last ? quiet + 1 : 0;
         last = now;
-        if (quiet == 3) {
+        if (quiet == 3 && !update_busy()) {  // the screen holds still on purpose during an update
             ESP_LOGE(TAG, "display task stalled (internal RAM free %u KB, largest %u KB)",
                      (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
                      (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024));

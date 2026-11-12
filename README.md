@@ -198,8 +198,9 @@ python3 companion/muse_companion.py update
 ```
 
 The second command sends `firmware/build/muse_charm.bin` to the online server and follows what
-happens. When Muse has been left alone for 20 seconds it shows "Updating 42%" at the top of its
-screen, downloads the image (a minute or two), and restarts into it. The character's frames are
+happens. When Muse has been left alone for 20 seconds it shows "Updating..." and holds still
+while it downloads the image (about two minutes; the command and the web app show how far it
+is), then restarts into it. The character's frames are
 part of the image, so a new character or new clips arrive the same way.
 
 | | |
