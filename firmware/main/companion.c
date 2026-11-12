@@ -16,9 +16,12 @@
 //   {"type":"server","url":"wss://...","token":"..."}  remember the online
 //   server (an empty url forgets it); Muse answers {"type":"paired","url":...}
 //   {"type":"alert","text":"Tea"}  a timer is up and Muse cannot say so
+//   {"type":"firmware","id":"<sha256>","size":3122944}  the online server has
+//   this firmware image for Muse (update.c)
 //
-// Messages to the server: "hello", "status" (how Muse is doing, once a minute),
-// "awake" (picked up, woken or switched on), and agent.c's voice messages.
+// Messages to the server: "hello" (with the firmware image Muse is running),
+// "status" (how Muse is doing, once a minute), "awake" (picked up, woken or
+// switched on), "update" (update.c's progress) and agent.c's voice messages.
 
 #include "companion.h"
 
@@ -43,6 +46,7 @@
 #include "nvs.h"
 #include "panel.h"
 #include "power.h"
+#include "update.h"
 #include "wifi.h"
 
 static const char *TAG = "companion";
@@ -128,6 +132,14 @@ static void handle_message(const char *text, int len)
         snprintf(caption, sizeof(caption), "Linked to %.30s", name && name[0] ? name : "your computer");
         ESP_LOGI(TAG, "%s", caption);
         post_event(COMPANION_LINKED, caption);
+        update_on_linked();
+    } else if (type && strcmp(type, "firmware") == 0) {
+        // Only the online server, reached over TLS with the token, may update Muse.
+        const cJSON *size = cJSON_GetObjectItem(root, "size");
+        if (s_using_online && strncmp(s_uri, "wss://", 6) == 0) {
+            update_offer(cJSON_GetStringValue(cJSON_GetObjectItem(root, "id")),
+                         cJSON_IsNumber(size) ? size->valueint : 0);
+        }
     } else if (type && strcmp(type, "alert") == 0) {
         post_event(COMPANION_ALERT, cJSON_GetStringValue(cJSON_GetObjectItem(root, "text")));
     } else if (type && strcmp(type, "server") == 0) {
@@ -415,7 +427,10 @@ static void companion_task(void *arg)
         if (s_ws) {
             if (s_hello_due && s_connected) {
                 s_hello_due = false;
-                companion_send_text("{\"type\":\"hello\",\"name\":\"Muse\",\"voice\":1}");
+                char hello[200];
+                snprintf(hello, sizeof(hello), "{\"type\":\"hello\",\"name\":\"Muse\",\"voice\":1,\"fw\":\"%s\",\"ver\":\"%s\"}",
+                         update_running_id(), update_running_version());
+                companion_send_text(hello);
                 if (muse_now_ms() < JUST_SWITCHED_ON_MS) {
                     s_awake_due = true;  // switched on: someone is here
                 }
@@ -481,6 +496,20 @@ void companion_report_awake(void)
         s_status_due = true;
         s_awake_due = true;
     }
+}
+
+bool companion_update_source(char *url, size_t url_len, char *auth, size_t auth_len)
+{
+    // wss://host[:port]/device  ->  https://host[:port]/firmware.bin
+    if (!s_using_online || !s_connected || strncmp(s_online_url, "wss://", 6) != 0 || !s_online_token[0]) {
+        return false;
+    }
+    const char *host = s_online_url + 6;
+    const char *end = strchr(host, '/');
+    const int host_len = end ? (int)(end - host) : (int)strlen(host);
+    const int n = snprintf(url, url_len, "https://%.*s/firmware.bin", host_len, host);
+    const int m = snprintf(auth, auth_len, "Bearer %s", s_online_token);
+    return n > 0 && n < (int)url_len && m > 0 && m < (int)auth_len;
 }
 
 bool companion_next_event(companion_event_t *out)

@@ -51,6 +51,11 @@ void companion_report_status(void);
 // time in a morning, Muse says good morning.
 void companion_report_awake(void);
 
+// For update.c: where to download firmware from (the online server Muse is
+// linked to, over HTTPS) and the Authorization header that goes with it. False
+// unless Muse is linked to an online server over TLS with a token.
+bool companion_update_source(char *url, size_t url_len, char *auth, size_t auth_len);
+
 // Send to the server (voice chat). Return false when not linked.
 bool companion_send_text(const char *text);
 bool companion_send_binary(const void *data, size_t len);

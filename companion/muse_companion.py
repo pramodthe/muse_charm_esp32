@@ -43,10 +43,12 @@ import os
 import socket
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
 import muse_chat
+import muse_firmware
 import muse_jobs
 import muse_online
 import muse_results
@@ -288,6 +290,7 @@ class Hub:
             "muse": next((link.status_report() for link in self.devices.values() if link.status), None),
             "timers": self.timers.list()["timers"],
             "reminders": self.reminders.list()["reminders"],
+            "firmware": self.firmware_state(),
             "memory": muse_world.notes(),
             "voice": muse_voice.key_status()[0] is not None,
             "cannot_work": self.jobs.problem() or "",
@@ -355,6 +358,42 @@ class Hub:
                                             muse_world.finished_since_briefing(self.jobs.list(), mark=True))
             log("good morning" + (" (with a briefing)" if note != muse_world.GREETING_NOTE else ""))
             link.voice.announce(note=note)
+
+    # ------------------------------------------------------------ firmware updates
+    def offer_firmware(self, link):
+        """Tell a Muse about the firmware image the server has, if it runs another one."""
+        have = muse_firmware.info()
+        runs = link.firmware.get("id")
+        if not self.token or not have or not runs:
+            return False      # only the online server updates Muse; older firmware cannot be updated
+        if runs == have["id"] or link.firmware.get("refused") == have["id"]:
+            return False
+        log("Muse runs firmware %s (%s); offering %s (%s)" % (
+            link.firmware.get("version") or "?", runs[:8], have.get("version") or "?", have["id"][:8]))
+        link.firmware["update"] = {"state": "offered"}
+        link.send_json({"type": "firmware", "id": have["id"], "size": have["size"], "version": have.get("version", "")})
+        return True
+
+    def on_update(self, link, msg):
+        """Muse reports on an update: downloading (with percent), restarting, kept, failed, refused."""
+        state, why = str(msg.get("state") or ""), str(msg.get("why") or "")[:80]
+        link.firmware["update"] = {"state": state, "percent": msg.get("percent"), "why": why}
+        if state == "refused":
+            link.firmware["refused"] = (muse_firmware.info() or {}).get("id")
+        if state == "downloading":
+            log("update: Muse is downloading the firmware, %s %%" % msg.get("percent"))
+        else:
+            log("update: %s%s" % ({"restarting": "installed; Muse is restarting into it",
+                                   "kept": "the new firmware works; Muse keeps it",
+                                   "failed": "failed", "refused": "Muse will not install this image"}.get(state, state),
+                                  ": " + why if why else ""))
+
+    def firmware_state(self):
+        """For the web app and the update command."""
+        have = muse_firmware.info()
+        link = next((l for l in self.devices.values() if l.firmware.get("id")), None)
+        return {"server": {k: have[k] for k in ("id", "version", "size", "built") if k in have} if have else None,
+                "muse": {k: v for k, v in link.firmware.items() if k != "refused"} if link else None}
 
     def claude_summary(self):
         """What Claude Code is up to, for Muse to talk about."""
@@ -429,6 +468,7 @@ class DeviceLink:
         self.voice_queue = asyncio.Queue()   # reply audio and voice messages, in order
         self.voice_on = None
         self.status, self.status_at = {}, 0.0   # what Muse last reported about itself
+        self.firmware = {}                      # the image it runs: {"id", "version"}, and its "update"
         self.sender = asyncio.ensure_future(self._send_voice())
 
     def send_json(self, msg):
@@ -461,7 +501,14 @@ class DeviceLink:
         elif t == "awake":
             self.hub.on_awake(self)
         elif t == "hello":
-            log("Muse says hello", {k: v for k, v in msg.items() if k != "type"})
+            said = {k: v for k, v in msg.items() if k != "type"}
+            if said.get("fw"):
+                self.firmware = {"id": str(said["fw"]), "version": str(said.get("ver") or "")}
+                said["fw"] = said["fw"][:8]
+            log("Muse says hello", said)
+            self.hub.offer_firmware(self)
+        elif t == "update":
+            self.hub.on_update(self, msg)
         elif t == "paired":
             if msg.get("url"):
                 log("Muse saved the online server. Stop this server (Ctrl-C) and Muse will use it.")
@@ -599,6 +646,60 @@ async def handle(hub, reader, writer):
                           "Sec-WebSocket-Accept: %s\r\n\r\n" % ws.accept_key(key)).encode())
             await writer.drain()
             await hub.serve_device(reader, writer, peer)
+            return
+
+        if path in ("/firmware", "/firmware.bin", "/firmware.json"):
+            # Firmware updates over WiFi (muse_firmware.py). Online only, and always with the
+            # token: this is what Muse installs.
+            if not hub.token:
+                respond(writer, "404 Not Found", b'{"error": "updates over WiFi need the online server"}')
+                return
+            if not authorized(hub, headers):
+                # Take what was being sent first, so that the sender gets this answer and not a reset.
+                left = int(headers.get("content-length") or 0)
+                while 0 < left <= muse_firmware.MAX_BYTES:
+                    piece = await asyncio.wait_for(reader.read(min(1 << 16, left)), 10)
+                    if not piece:
+                        break
+                    left -= len(piece)
+                respond(writer, "401 Unauthorized")
+                return
+            if method == "GET" and path == "/firmware.bin":
+                image = muse_firmware.read()
+                if image is None:
+                    respond(writer, "404 Not Found")
+                else:
+                    log("firmware: sending the image to", peer)
+                    respond(writer, "200 OK", image, "application/octet-stream")
+                return
+            if method == "GET" and path == "/firmware.json":
+                respond(writer, "200 OK", json.dumps(hub.firmware_state()).encode())
+                return
+            n = int(headers.get("content-length") or 0)
+            if method != "POST" or path != "/firmware" or "x-muse" not in headers or n <= 0:
+                respond(writer, "400 Bad Request")
+                return
+            if n > muse_firmware.MAX_BYTES:
+                respond(writer, "413 Payload Too Large")
+                return
+            if headers.get("expect", "").lower() == "100-continue":
+                writer.write(b"HTTP/1.1 100 Continue\r\n\r\n")
+            image = bytearray()
+            while len(image) < n:
+                piece = await asyncio.wait_for(reader.read(min(1 << 16, n - len(image))), 30)
+                if not piece:
+                    raise asyncio.IncompleteReadError(bytes(image), n)
+                image += piece
+            try:
+                found = muse_firmware.put(bytes(image))
+            except ValueError as e:
+                log("firmware: refused an upload:", e)
+                respond(writer, "400 Bad Request", json.dumps({"ok": False, "error": str(e)}).encode())
+                return
+            log("firmware: now have %s (%s, %d KB)" % (found["version"], found["id"][:8], found["size"] // 1024))
+            told = sum(1 for link in list(hub.devices.values()) if hub.offer_firmware(link))
+            respond(writer, "200 OK", json.dumps(dict(found, ok=True, offered_to=told, connected=len(hub.devices),
+                                                      muse=hub.firmware_state()["muse"])).encode())
             return
 
         if path in ("/app.json", "/feed.json", "/ask", "/chat", "/memory", "/reminders"):
@@ -832,9 +933,93 @@ def open_results(port):
     print("Opened %s in your browser. It stays signed in there; bookmark it." % page)
 
 
+def send_update(path, wait=True):
+    """Put a firmware build on the online server, for Muse to install by itself."""
+    saved = muse_online.load()
+    if not (saved.get("url") and saved.get("token")):
+        sys.exit("updates over WiFi go through the online server, and none is saved in %s; deploy one "
+                 "first (see the README), or flash over USB with idf.py flash" % muse_online.SERVER_FILE)
+    path = path or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                "firmware", "build", "muse_charm.bin")
+    try:
+        with open(path, "rb") as f:
+            image = f.read()
+        found = muse_firmware.describe(image)
+    except OSError:
+        sys.exit("no firmware build at %s; build it first (cd firmware && idf.py build)" % path)
+    except ValueError as e:
+        sys.exit("%s: %s" % (path, e))
+    headers = {"Authorization": "Bearer " + saved["token"], "X-Muse": "1", "Content-Type": "application/octet-stream"}
+
+    def ask(where, data=None):
+        req = urllib.request.Request(muse_online.http_url(saved["url"], where), data=data, headers=headers)
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return json.loads(r.read())
+
+    print("Sending firmware %s (%s, %.1f MB) to the online server..." % (
+        found["version"], found["id"][:8], found["size"] / 1e6), flush=True)
+    try:
+        answer = ask("/firmware", image)
+    except urllib.error.HTTPError as e:
+        try:
+            why = json.loads(e.read()).get("error", "")
+        except ValueError:
+            why = ""
+        sys.exit("the server did not take it (%d%s)%s" % (e.code, ": " + why if why else "",
+                 "; deploy the server again first, this one is older" if e.code == 404 and not why else ""))
+    except OSError as e:
+        sys.exit("could not reach the online server (%s)" % e)
+    muse = answer.get("muse")
+    if not answer.get("connected"):
+        print("The server has it. No Muse is connected right now; it gets the update when it next connects.")
+        return
+    if not muse:
+        print("The server has it, but the connected Muse runs firmware from before updates over WiFi.\n"
+              "Flash it once over USB (cd firmware && idf.py flash); after that, updates arrive by themselves.")
+        return
+    if muse.get("id") == found["id"]:
+        print("The server has it, and Muse already runs this image.")
+        return
+    if not answer.get("offered_to"):
+        print("The server has it, but Muse will not install it: this image did not work on it before.")
+        return
+    print("Muse (running %s) installs it once it has been left alone for 20 seconds, then restarts."
+          % (muse.get("version") or "?"))
+    if not wait:
+        return
+    last, give_up = None, time.time() + 15 * 60
+    while time.time() < give_up:
+        time.sleep(3)
+        try:
+            muse = ask("/firmware.json").get("muse")
+        except OSError:
+            continue      # the server is busy sending the image
+        update = (muse or {}).get("update") or {}
+        now = (bool(muse), update.get("state"), update.get("percent"))
+        if muse and muse.get("id") == found["id"]:
+            print("Muse now runs %s%s" % (found["version"], "." if update.get("state") == "kept"
+                                           else " (on trial until it has linked to the server)."))
+            if update.get("state") == "kept" or last == now:
+                return
+        elif now != last:
+            if not muse:
+                print("  Muse is restarting...", flush=True)
+            elif update.get("state") == "downloading":
+                print("  downloading, %s %%" % update.get("percent"), flush=True)
+            elif update.get("state") in ("failed", "refused"):
+                print("  the update %s: %s" % (update["state"], update.get("why") or "no reason given"))
+                if update["state"] == "refused":
+                    return
+                print("  Muse tries again in five minutes (three times in all).")
+        last = now
+    print("Still waiting after 15 minutes; check Muse, and python3 companion/muse_companion.py update again.")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Muse companion server for Claude Code and voice chat")
-    ap.add_argument("command", nargs="?", default="serve", choices=["serve", "demo", "pair", "results"])
+    ap.add_argument("command", nargs="?", default="serve", choices=["serve", "demo", "pair", "results", "update"])
+    ap.add_argument("file", nargs="?", help="update: the firmware image (default: firmware/build/muse_charm.bin)")
+    ap.add_argument("--no-wait", action="store_true", help="update: do not wait for Muse to install it")
     ap.add_argument("--port", type=int, default=int(os.environ.get("PORT") or PORT))
     ap.add_argument("--online", action="store_true", help="demo: play it through the online server")
     ap.add_argument("--forget", action="store_true", help="pair: make Muse forget the online server")
@@ -844,6 +1029,9 @@ def main():
         return
     if args.command == "results":
         open_results(args.port)
+        return
+    if args.command == "update":
+        send_update(args.file, not args.no_wait)
         return
     pair = None
     if args.command == "pair":

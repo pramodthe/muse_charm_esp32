@@ -37,6 +37,7 @@
 #include "power.h"
 #include "settings.h"
 #include "touch.h"
+#include "update.h"
 #include "wifi.h"
 
 static const char *TAG = "muse";
@@ -112,6 +113,7 @@ void app_main(void)
     agent_init();
 #endif
 #ifdef CONFIG_MUSE_COMPANION_ENABLE
+    update_start();
     companion_start();
 #endif
     audio_start();

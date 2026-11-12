@@ -473,6 +473,8 @@ function drawBar() {
   if (app) {
     const bits = [app.connected ? "Connected" : "Not connected"];
     if (app.muse && app.muse.battery_percent != null) bits.push("battery " + app.muse.battery_percent + "%" + (app.muse.power === "charging" ? ", charging" : ""));
+    const update = app.firmware && app.firmware.muse && app.firmware.muse.update;
+    if (update && update.state === "downloading") bits.push("updating its firmware, " + (update.percent || 0) + "%");
     for (const t of app.timers || []) bits.push(t.label + " in " + (t.minutes_left < 1 ? "under a minute" : Math.round(t.minutes_left) + " min"));
     how = bits.join(", ");
   }

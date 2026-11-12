@@ -18,6 +18,7 @@ idf_component_register(
         "camera.c"
         "zoom.c"
         "power.c"
+        "update.c"
     INCLUDE_DIRS "."
 )
 

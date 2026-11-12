@@ -55,3 +55,7 @@ CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER=y
 CONFIG_ESP_PHY_MAX_WIFI_TX_POWER=14
 # Phones send long headers to the setup page
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+
+# Firmware updates over WiFi (update.c): a new image is on trial until Muse has
+# linked to a server with it; the bootloader goes back to the old one otherwise.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

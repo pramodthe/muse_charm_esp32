@@ -43,6 +43,7 @@
 #include "freertos/task.h"
 #include "muse.h"
 #include "panel.h"
+#include "update.h"
 
 static const char *TAG = "agent";
 
@@ -307,7 +308,7 @@ bool agent_configured(void)
 
 bool agent_begin_turn(void)
 {
-    if (!s_mic) {
+    if (!s_mic || update_busy()) {  // not while a firmware update is being downloaded
         return false;
     }
     if (!s_available) {
