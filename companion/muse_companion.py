@@ -469,6 +469,7 @@ class DeviceLink:
         self.voice_on = None
         self.status, self.status_at = {}, 0.0   # what Muse last reported about itself
         self.firmware = {}                      # the image it runs: {"id", "version"}, and its "update"
+        self.said_hello = False
         self.sender = asyncio.ensure_future(self._send_voice())
 
     def send_json(self, msg):
@@ -502,6 +503,7 @@ class DeviceLink:
             self.hub.on_awake(self)
         elif t == "hello":
             said = {k: v for k, v in msg.items() if k != "type"}
+            self.said_hello = True
             if said.get("fw"):
                 self.firmware = {"id": str(said["fw"]), "version": str(said.get("ver") or "")}
                 said["fw"] = said["fw"][:8]
@@ -698,8 +700,10 @@ async def handle(hub, reader, writer):
                 return
             log("firmware: now have %s (%s, %d KB)" % (found["version"], found["id"][:8], found["size"] // 1024))
             told = sum(1 for link in list(hub.devices.values()) if hub.offer_firmware(link))
+            # "too_old": a Muse whose firmware is from before updates over WiFi (it does not say what it runs).
+            too_old = sum(1 for link in hub.devices.values() if link.said_hello and not link.firmware.get("id"))
             respond(writer, "200 OK", json.dumps(dict(found, ok=True, offered_to=told, connected=len(hub.devices),
-                                                      muse=hub.firmware_state()["muse"])).encode())
+                                                      too_old=too_old, muse=hub.firmware_state()["muse"])).encode())
             return
 
         if path in ("/app.json", "/feed.json", "/ask", "/chat", "/memory", "/reminders"):
@@ -973,9 +977,12 @@ def send_update(path, wait=True):
     if not answer.get("connected"):
         print("The server has it. No Muse is connected right now; it gets the update when it next connects.")
         return
-    if not muse:
+    if not muse and answer.get("too_old"):
         print("The server has it, but the connected Muse runs firmware from before updates over WiFi.\n"
               "Flash it once over USB (cd firmware && idf.py flash); after that, updates arrive by themselves.")
+        return
+    if not muse:
+        print("The server has it. Muse is still connecting; it gets the update once it has.")
         return
     if muse.get("id") == found["id"]:
         print("The server has it, and Muse already runs this image.")
@@ -1006,10 +1013,13 @@ def send_update(path, wait=True):
                 print("  Muse is restarting...", flush=True)
             elif update.get("state") == "downloading":
                 print("  downloading, %s %%" % update.get("percent"), flush=True)
-            elif update.get("state") in ("failed", "refused"):
-                print("  the update %s: %s" % (update["state"], update.get("why") or "no reason given"))
-                if update["state"] == "refused":
-                    return
+            elif update.get("state") == "refused":
+                print("Muse went back to the firmware it had (%s): the new image did not work on it. It crashed,\n"
+                      "or could not link to a server within ten minutes. Muse will not install this image again."
+                      % (muse.get("version") or "?"))
+                return
+            elif update.get("state") == "failed":
+                print("  the download failed: %s" % (update.get("why") or "no reason given"))
                 print("  Muse tries again in five minutes (three times in all).")
         last = now
     print("Still waiting after 15 minutes; check Muse, and python3 companion/muse_companion.py update again.")
