@@ -665,6 +665,13 @@ the scene, because the anchors are taken from them.
   [The web app](#the-web-app)). "can't open file
   .../companion/muse_companion.py" means the Terminal is in another folder: `cd` to the
   repository first.
+- **Muse does not take an update:** it installs one only when it is linked to the online server
+  and has been left alone for 20 seconds; `python3 companion/muse_companion.py update` says what
+  it is waiting for. "runs firmware from before updates over WiFi" means one more `idf.py flash`
+  over the cable.
+- **Muse went back to the old firmware after an update:** the new image crashed, or could not
+  link to a server within ten minutes, so Muse dropped it and will not take that image again.
+  Fix the cause and build again; a new build is a new image.
 - **The web app looks like an older version after a deploy:** reload the page without the
   browser's cache (Cmd+Shift+R on macOS).
 - **Muse answers before you finish:** Deepgram ends the turn at a long pause. Keep talking, or

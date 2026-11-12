@@ -505,7 +505,8 @@ class DeviceLink:
             said = {k: v for k, v in msg.items() if k != "type"}
             self.said_hello = True
             if said.get("fw"):
-                self.firmware = {"id": str(said["fw"]), "version": str(said.get("ver") or "")}
+                # Kept alongside what it has already reported: "kept" can arrive just before the hello.
+                self.firmware = dict(self.firmware, id=str(said["fw"]), version=str(said.get("ver") or ""))
                 said["fw"] = said["fw"][:8]
             log("Muse says hello", said)
             self.hub.offer_firmware(self)
@@ -994,7 +995,7 @@ def send_update(path, wait=True):
           % (muse.get("version") or "?"))
     if not wait:
         return
-    last, give_up = None, time.time() + 15 * 60
+    last, restarted_at, give_up = None, None, time.time() + 15 * 60
     while time.time() < give_up:
         time.sleep(3)
         try:
@@ -1004,9 +1005,14 @@ def send_update(path, wait=True):
         update = (muse or {}).get("update") or {}
         now = (bool(muse), update.get("state"), update.get("percent"))
         if muse and muse.get("id") == found["id"]:
-            print("Muse now runs %s%s" % (found["version"], "." if update.get("state") == "kept"
-                                           else " (on trial until it has linked to the server)."))
-            if update.get("state") == "kept" or last == now:
+            if update.get("state") == "kept":
+                print("Muse now runs %s, and keeps it: it has linked to the server with it." % found["version"])
+                return
+            if restarted_at is None:
+                restarted_at = time.time()
+                print("  Muse restarted into %s; waiting for it to link..." % found["version"], flush=True)
+            elif time.time() - restarted_at > 60:
+                print("Muse now runs %s (on trial until it has linked to a server)." % found["version"])
                 return
         elif now != last:
             if not muse:
