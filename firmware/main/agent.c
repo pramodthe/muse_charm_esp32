@@ -150,15 +150,20 @@ static void agent_task(void *arg)
         // The reply is finished once the server says so and playback has drained,
         // unless the server is still looking something up: then Muse thinks
         // again until the answer comes.
+        // Deepgram may send "let me check" and the answer after the lookup as one
+        // reply, with no "done" between them: so while looking, running out of
+        // audio is enough to think, and audio arriving while thinking is speaking.
         const int state = g_muse.agent_state;
         const bool looking = s_looking && now - s_looking_since_ms < LOOKUP_MAX_MS;
+        const bool drained = xStreamBufferIsEmpty(s_speech);
         if (state == MUSE_AGENT_SPEAKING) {
-            if (s_audio_done && xStreamBufferIsEmpty(s_speech)) {
+            if (drained && (s_audio_done || looking)) {
                 if (!speech_empty_since) {
                     speech_empty_since = now;
                 } else if (now - speech_empty_since > SPEECH_DONE_GAP_MS) {
                     speech_empty_since = 0;
                     if (looking) {
+                        s_audio_done = false;  // that "done" was for the line before the answer
                         s_turn_end_ms = now;
                         set_state(MUSE_AGENT_THINKING);
                     } else {
@@ -168,8 +173,14 @@ static void agent_task(void *arg)
             } else {
                 speech_empty_since = 0;
             }
-        } else if (state == MUSE_AGENT_THINKING && !looking && now - s_turn_end_ms > REPLY_TIMEOUT_MS) {
-            fail("no reply from the computer");
+        } else if (state == MUSE_AGENT_THINKING) {
+            if (!drained && !s_discard && !s_turn_active) {
+                set_state(MUSE_AGENT_SPEAKING);  // the answer is coming in
+            } else if (s_audio_done && drained && !looking) {
+                set_state(MUSE_AGENT_IDLE);      // the reply ended without more words
+            } else if (!looking && now - s_turn_end_ms > REPLY_TIMEOUT_MS) {
+                fail("no reply from the computer");
+            }
         }
     }
 }
@@ -280,6 +291,7 @@ void agent_on_voice(const cJSON *msg)
         if (g_muse.agent_state != MUSE_AGENT_SPEAKING) {
             if (g_muse.agent_state != MUSE_AGENT_THINKING) {
                 s_turn_end_ms = muse_now_ms();  // the reply is due from now
+                s_audio_done = false;           // any "done" so far was for an earlier reply
             }
             set_state(MUSE_AGENT_THINKING);
         }
@@ -294,6 +306,9 @@ void agent_on_voice(const cJSON *msg)
         s_looking_since_ms = muse_now_ms();
         s_looking = true;
         if (g_muse.agent_state != MUSE_AGENT_SPEAKING) {
+            if (g_muse.agent_state != MUSE_AGENT_THINKING) {
+                s_audio_done = false;
+            }
             s_turn_end_ms = muse_now_ms();
             set_state(MUSE_AGENT_THINKING);
         }
