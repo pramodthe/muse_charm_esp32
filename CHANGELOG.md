@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.13.0 (2026-11-12)
+
+- **Quick answers from the web.** "Will it rain this afternoon?" Muse says "let me check!", thinks while it searches, and answers in a sentence or two, usually 3 to 6 seconds later. The AI's new `look_up` tool (`muse_lookup.py`) uses Claude with Anthropic's web search and the same `ANTHROPIC_API_KEY` as background jobs. In the web app the answer comes with links to the pages it was taken from.
+- Firmware: Muse keeps its thought cloud up between "let me check" and the answer (the server sends `looking` and `looked`). Delivered over WiFi.
+- Both prompts now say where the user is (`place` in `voice.json`, else the city in the time zone's name). New options: `lookup_model`, `lookup_searches`, `place`.
+- Fixed: the server kept the Deepgram connection open with a KeepAlive 7 s after any message, but Deepgram only counts audio and KeepAlive, so a slow tool could get the connection closed mid-answer. KeepAlive now goes 5 s after the last audio or KeepAlive.
+- Fixed: the typed chat and lookups allowed too few tokens for a model that thinks first, which could cut an answer off. They allow 1500 and ask for low effort.
+- `test_voice.py` waits for the answer after a lookup.
+
 ## 0.12.0 (2026-11-12)
 
 - **Firmware updates over WiFi.** `python3 companion/muse_companion.py update` sends a build to the online server; Muse downloads it when it has been left alone for 20 seconds, with "Updating..." on a still screen, and restarts into it. Only the online server can do this, over TLS and with the token.

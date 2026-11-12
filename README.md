@@ -44,13 +44,15 @@ when Claude needs your OK and cheers when the reply is done.
 | Use Claude Code | Shows what Claude is doing, comes up to the glass and waves when it needs you, cheers when it's done |
 | Nothing | Breathes, blinks and glances around; now and then peeks at you up close, looks around, wiggles or stretches |
 | Nothing for 3 minutes | Dozes off: eyes closed, "z z Z", the screen dimmed. Touch it, pick it up or press BOOT to wake it |
+| Ask a quick question: "will it rain this afternoon?" | Says "let me check!", thinks for a few seconds while it searches the web, then tells you |
 | Ask for something bigger: "research the best budget 3D printers" | Says it's on it, works in the background for a few minutes, then tells you the answer in a sentence; the write-up is on a web page |
 | Set a timer or a reminder, run its battery down, pick it up in the morning | Speaks first: "Time's up! Tea.", "Hey, reminder time! Call mum.", "I'm getting sleepy, could you plug me in?", and a good morning with what is on today |
 
 The AI has Muse's body and screen as tools, so you can just ask: "dance for me", "come closer",
 "show the word hello", "turn the volume down", "good night". It can sense things too: "how's your
 battery?", "what time is it?", "set a timer for five minutes", "remind me at five to call mum",
-"remember that I like tea". Ask
+"remember that I like tea". It looks things up on the web: "will it rain this afternoon?",
+"who won the game last night?", "what time does the hardware store close?". Ask
 "what is Claude doing?" and it checks on your Claude Code sessions.
 
 Without the companion server, Muse is still a full interactive mascot: pressing BOOT squeezes it
@@ -251,6 +253,7 @@ firmware performs them (`perform()` in `firmware/main/behavior.c`):
 | `reminder` | Sets, lists or cancels reminders for a clock time: today, on a later day, or repeating every day, on weekdays or every week. When one is due Muse says it, waves and shows a sign | "Remind me at 5 pm to call mum", "remind me every weekday at nine to stand up", "what reminders do I have?" |
 | `remember`, `forget` | Keeps short notes about you between conversations, and drops them again | "Remember my name is Sam", "forget everything" |
 | `claude_status` | Reads what your Claude Code sessions are doing | "What is Claude doing?" |
+| `look_up` | Answers a quick question from the web in a few seconds: one or two searches, a short answer to say. The web app shows the pages it came from | "Will it rain this afternoon?", "who won the F1 race?" |
 | `work_on`, `work_status` | Hands research to a background job that searches the web and writes up what it finds; says how jobs are going and what they found | "Research the best budget 3D printers", "what did you find?" |
 
 Muse reports its sensors to the server at the start of each conversation and once a minute
@@ -264,6 +267,22 @@ is said when it connects. Timers live in the server only, so they are lost if it
 Muse also uses the moves by itself to show feelings while it talks. To add a move, add it to
 `MOVES` in `muse_voice.py`, to `muse_move_t` in `muse.h` and the name table in `agent.c`, and
 play it in `perform()`.
+
+### Quick answers from the web
+
+Ask Muse something that needs the web but not a write-up ("will it rain this afternoon?", "what's
+the Aussie dollar worth?", "is the bridge climb open today?") and it says "let me check!", shows
+its thought cloud while it searches, and answers in a sentence or two, usually 3 to 6 seconds
+later. Typed in the web app, the same question gets a written answer, with the pages it came from
+as links under it.
+
+It uses Claude through the Anthropic API with Anthropic's web search
+([`companion/muse_lookup.py`](companion/muse_lookup.py)): the same `ANTHROPIC_API_KEY` as
+background jobs, and web search allowed for the account in the Claude Console (background jobs
+need that too, so if research works, this does). Each search is billed
+on the Anthropic account as well as the model's tokens; see Anthropic's pricing. A question uses
+one or two searches, at most `lookup_searches`. For the weather and other local questions Muse
+assumes you are in the city in your time zone's name; set `place` in `voice.json` to be exact.
 
 ### Background jobs
 
@@ -436,6 +455,9 @@ To change the voice, the model or Muse's personality, create `~/.config/muse/voi
 | `speak_first` | `true` | `false`: Muse only speaks when spoken to (see [Muse speaks first](#muse-speaks-first)) |
 | `worker_model` | `anthropic:claude-sonnet-5-5` | The model for [background jobs](#background-jobs), as Deep Agents names it |
 | `chat_model` | `claude-haiku-5-5` | The model that answers messages typed in [the web app](#the-web-app) |
+| `lookup_model` | `claude-haiku-5-5` | The model that looks up quick answers on the web |
+| `lookup_searches` | `3` | Web searches one quick question may use |
+| `place` | the city in `timezone`'s name | Where you are, such as `"Newtown, Sydney"`, for the weather and other local questions |
 
 To test voice chat without Muse, `python3 companion/test_voice.py "Hello Muse!"` plays Muse's part
 from your computer (macOS `say`, or `--wav file.wav`) and saves the spoken reply to `reply.wav`.

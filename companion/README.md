@@ -32,6 +32,7 @@ Claude Code ──hooks (curl)──> muse_companion.py <──websocket──> 
 | `muse_results.py` | The web app at `/results`: the chat, ideas, memory, Muse's status |
 | `muse_chat.py` | The conversation shared by voice and web app, and the answers to typed messages (Anthropic API) |
 | `muse_firmware.py` | The firmware image the online server keeps for Muse (updates over WiFi) |
+| `muse_lookup.py` | Quick answers from the web for the `look_up` tool (Anthropic API with web search) |
 | `muse_ws.py` | A small websocket implementation (server and client) |
 | `muse_env.py` | Reads your keys from the repository's `.env` file |
 | `install_hooks.py` | Adds or removes the Claude Code hooks |
@@ -143,8 +144,13 @@ Create `~/.config/muse/voice.json` to change how Muse talks, for example
 | `prompt` | a short, playful Muse | Muse's personality |
 | `timezone` | the server's own | An IANA name such as `Australia/Sydney`, for the time tool |
 | `speak_first` | `true` | `false`: no spoken timers, reminders, battery warnings or good mornings (timers and reminders still chirp and show a sign) |
+| `chat_model` | `claude-haiku-5-5` | The model that answers typed messages (`muse_chat.py`) |
+| `lookup_model` | `claude-haiku-5-5` | The model for quick answers from the web (`muse_lookup.py`) |
+| `lookup_searches` | `3` | Web searches one quick question may use |
+| `place` | the city in the time zone's name | Where the user is, for the weather and local questions |
 
-The AI's tools are declared in `TOOLS` and carried out in `_function()` in `muse_voice.py`:
+The AI's tools are declared in `TOOLS` and carried out by `run_tool()` in `muse_voice.py`, for
+the voice and the typed chat alike (`run_tool_async()` for one that waits on the network):
 
 - `muse_do` (moves such as wave, dance, come_closer or sleep, one or several in order),
   `muse_show` (a short sign on the screen) and `muse_set` (brightness and volume), which the
@@ -155,6 +161,14 @@ The AI's tools are declared in `TOOLS` and carried out in `_function()` in `muse
   `memory.json` in `~/.config/muse` (or `MUSE_DATA_DIR`) and added to the prompt when a
   conversation starts; reminders are kept in `reminders.json` there.
 - `claude_status`: what your Claude Code sessions are doing.
+- `look_up`: a quick answer from the web, in `muse_lookup.py`. One request to the Anthropic API
+  with the basic web search tool (`web_search_20250305`, the fastest), low effort, and a prompt
+  that asks for one or two spoken sentences in local units. It runs in a thread. In a spoken
+  conversation the server sends Muse `{"type":"voice","state":"looking"}` and then `"looked"`,
+  and the firmware keeps its thought cloud up between "let me check" and the answer (Deepgram
+  sends both as one reply). The pages the answer cites are added to the conversation as
+  `{"who": "muse", "lookup": ..., "sources": [...]}`, which the web app shows as links.
+  `MUSE_LOOKUP_FAKE=1` answers without the API, for tests.
 - `work_on` and `work_status`: background jobs, below.
 
 ## Background jobs

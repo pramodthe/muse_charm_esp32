@@ -13,7 +13,7 @@ online, and a web app served by that server. `README.md` explains what it does a
   (Deepgram Voice Agent and the AI's tools), `muse_chat.py` (typed chat and the shared
   conversation), `muse_world.py` (time, timers, reminders, notes), `muse_jobs.py` and
   `muse_worker.py` (background research), `muse_results.py` (the web app, one HTML string),
-  `muse_firmware.py` (the image kept for updates).
+  `muse_firmware.py` (the image kept for updates), `muse_lookup.py` (quick answers from the web).
 - `assets/` and `blender/`: the character's frames and model. They are made by hand and exported
   with `blender/export_clips.py`; do not regenerate or edit them as part of other work.
 
@@ -51,5 +51,6 @@ host; that one is for the owner to run.
 
 There is no test suite. Check server changes by running the server with a throwaway
 `MUSE_DATA_DIR` and talking to it (`companion/test_voice.py`, or a small script that connects to
-`/device` as Muse would). `MUSE_CHAT_FAKE=1` and `MUSE_WORKER_FAKE=1` stand in for the models.
+`/device` as Muse would). `MUSE_CHAT_FAKE=1`, `MUSE_WORKER_FAKE=1` and `MUSE_LOOKUP_FAKE=1` stand
+in for the models.
 Check firmware on the device and read its serial log.
