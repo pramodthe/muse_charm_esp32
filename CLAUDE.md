@@ -22,9 +22,9 @@ online, and a web app served by that server. `README.md` explains what it does a
 ```bash
 python3 companion/muse_companion.py                 # the server on this computer
 python3 companion/deploy_modal.py --code-only       # redeploy the online server's code
-cd firmware && idf.py build                         # needs ESP-IDF v5.5 (source export.sh first)
+idf.py -C firmware build                            # needs ESP-IDF v5.5 (source export.sh first)
 python3 companion/muse_companion.py update          # send the build to Muse over WiFi
-idf.py -p /dev/cu.usbmodem1101 flash                # over the cable (the port name can change)
+idf.py -C firmware -p /dev/cu.usbmodem1101 flash    # over the cable (the port name can change)
 ```
 
 `python3 companion/deploy_modal.py` without `--code-only` also sends the keys in `.env` to the

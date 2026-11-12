@@ -193,11 +193,13 @@ host's settings, and save `{"url": "wss://your-host/device", "token": "..."}` in
 Once Muse is linked to the online server, new firmware reaches it without the cable:
 
 ```bash
-cd firmware && idf.py build && cd ..
+idf.py -C firmware build
 python3 companion/muse_companion.py update
 ```
 
-The second command sends `firmware/build/muse_charm.bin` to the online server and follows what
+Run both from the repository's folder, in a Terminal where ESP-IDF is set up (`idf.py: command
+not found` means it is not: run `. $HOME/esp/esp-idf/export.sh`, or wherever you installed it,
+first). The second command sends `firmware/build/muse_charm.bin` to the online server and follows what
 happens. When Muse has been left alone for 20 seconds it shows "Updating..." and holds still
 while it downloads the image (about two minutes; the command and the web app show how far it
 is), then restarts into it. The character's frames are
