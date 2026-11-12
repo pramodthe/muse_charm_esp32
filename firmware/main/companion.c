@@ -416,6 +416,7 @@ static void companion_task(void *arg)
     (void)arg;
     bool said_looking = false;
     for (;;) {
+        update_poll();
         if (!wifi_connected()) {
             if (s_ws) {
                 destroy_ws();

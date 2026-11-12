@@ -6,7 +6,8 @@
 // says which image it is running; if the server has another one, it offers it
 // ({"type":"firmware","id":...,"size":...}). Once Muse has been left alone for
 // a little while it downloads the image from the same server over HTTPS, with
-// its token, into the app slot that is not in use, and restarts into it.
+// its token, into the app slot that is not in use, and restarts into it. The
+// screen holds still meanwhile, with "Updating..." up.
 //
 // The new image is on trial until Muse has linked to a server with it. If it
 // crashes first, or cannot link within ten minutes, the bootloader goes back
@@ -25,6 +26,10 @@ void update_start(void);
 // server's "id" for it), and its version. "" before update_start().
 const char *update_running_id(void);
 const char *update_running_version(void);
+
+// From companion.c, a few times a second: keep or drop an image on trial, and
+// start an update that was offered once Muse has been left alone.
+void update_poll(void);
 
 // From companion.c: the online server has this image for Muse.
 void update_offer(const char *id, int size);
