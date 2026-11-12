@@ -293,6 +293,7 @@ class Reminders:
 
     def __init__(self, fire, zone=lambda: ""):
         self.fire = fire
+        self.said = []     # the last few that came due, for the AI: (text, time.time)
         self.zone = zone   # the user's time zone, asked for each time (voice.json can change)
         try:
             with open(REMINDERS_FILE) as f:
@@ -369,6 +370,13 @@ class Reminders:
         return {"reminders": [{"id": r["id"], "text": r["text"], "when": self.when(r)}
                               for r in sorted(self.items, key=lambda r: r["at"])]}
 
+    def for_ai(self):
+        """What the AI is told when it asks which reminders there are."""
+        return {"reminders": [{"text": r["text"], "when": self.when(r)} for r in sorted(self.items, key=lambda r: r["at"])],
+                "already_said": [{"text": text, "said_at": clock(self._local(at))} for text, at in self.said],
+                "note": "A reminder that does not repeat leaves this list once Muse has said it out loud; "
+                        "one that is missing was delivered, not lost."}
+
     def cancel(self, which):
         """Cancel by id, by words in the text, or "all"."""
         which = " ".join(str(which or "").split()).lower()
@@ -396,6 +404,7 @@ class Reminders:
             else:
                 self.items.remove(r)
             if late < LATE_S:
+                self.said = (self.said + [(r["text"], time.time())])[-5:]
                 self.fire(r, late > 120)
         if due:
             self._save()

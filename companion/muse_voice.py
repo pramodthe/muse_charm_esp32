@@ -434,7 +434,7 @@ def run_tool(name, args, hub, body, via):
         elif action == "cancel":
             result = hub.reminders.cancel(args.get("text"))
         else:
-            result = hub.reminders.list()
+            result = hub.reminders.for_ai()
         log("%s: reminder" % via, action, "->", result)
         return json.dumps(result)
     if name == "remember":
