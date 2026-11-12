@@ -307,7 +307,7 @@ with colours and sizes from the Meta Horizon OS UI Set:
 
 | | |
 | --- | --- |
-| Chat | One conversation with Muse, typed and spoken: what you type here and what you say to the device both appear, with Muse's answers and a card for each write-up. Type a message and Muse answers in a few seconds, with the same tools as its voice: "dance for me" makes the Muse on your desk dance, "remind me at 5 pm to call mum" sets a reminder, and a bigger request starts a background job |
+| Chat | One conversation with Muse, typed and spoken: what you type here and what you say to the device both appear, with Muse's answers and a card for each write-up. Type a message and Muse answers in a few seconds, with the same tools as its voice: "dance for me" makes the Muse on your desk dance, "remind me at 5 pm to call mum" sets a reminder, and a bigger request starts a background job. Tap a message to take it out of the chat |
 | Ideas | Things to hand over (a tap puts one in the message box) and things to say out loud |
 | Memory | Your reminders, each with when it is due and a button to cancel it, and what Muse remembers about you: add a note, or forget one |
 | At the top | Whether Muse is connected, its battery, and running timers |

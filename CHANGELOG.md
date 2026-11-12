@@ -5,7 +5,7 @@
 - **Firmware updates over WiFi.** `python3 companion/muse_companion.py update` sends a build to the online server; Muse downloads it when it has been left alone for 20 seconds, shows "Updating 42%", and restarts into it. Only the online server can do this, over TLS and with the token.
 - A new image is on trial until Muse has linked to a server with it; if it crashes first or cannot link within ten minutes, Muse goes back to the firmware from before and refuses that image from then on.
 - The flash has two app slots for this (`partitions.csv`), so firmware from before needs one more `idf.py flash` over the cable. WiFi and the server's address are kept.
-- The web app can take entries out of the conversation (`POST /chat {"remove": [...]}`).
+- In the web app, tap a message and "Remove from the chat" takes it out of the conversation (`POST /chat {"remove": [...]}`), so Muse no longer reads it back either.
 
 ## 0.11.0 (2026-11-12)
 

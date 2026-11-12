@@ -100,6 +100,10 @@ PAGE = r"""<!doctype html>
   .me .bubble { background: var(--mine); }
   .muse .bubble { background: var(--theirs); max-width: 95%; }
   .bubble.bad { background: var(--danger-bg); color: var(--danger); }
+  .bubble[data-t] { cursor: pointer; }
+  .bubble.picked { box-shadow: 0 0 0 2px var(--text); }
+  .remove { font-size: 12px; line-height: 16px; font-weight: 600; color: var(--danger); margin: 4px 8px 0; padding: 4px 6px; border-radius: 8px; }
+  .remove:hover { background: var(--danger-bg); }
   .time { font-size: 11px; line-height: 16px; color: var(--faint); margin: 3px 8px 0; }
   .doing { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; line-height: 20px; margin: 6px 12px; }
   .doing svg { width: 17px; height: 17px; }
@@ -280,6 +284,8 @@ const $ = id => document.getElementById(id);
 const view = $("view"), compose = $("compose"), task = $("task"), shade = $("shade"), sheet = $("sheet");
 let jobs = [], messages = [], app = null, canRead = true, drawn = "", lastCount = -1, notice = "", reading = "";
 let pending = "";   // a typed message Muse is still answering
+let picked = null;  // the time ("t") of the message that was tapped, to remove it
+let stay = false;   // do not scroll on the next draw
 
 // Your own picture for Muse, if the server has one (companion/avatar.webp, .gif, .png or .jpg).
 // It is the tab's icon too (browsers show the first frame of an animated one).
@@ -386,8 +392,11 @@ function jobReply(j, onIt) {
   return `<div class="msg muse">${reply}</div>`;
 }
 
-const mine = (text, t, aloud) => `<div class="msg me"><div class="bubble">${esc(text)}</div>
-  <span class="time">${timeOf(t)}${aloud ? ", out loud" : ""}</span></div>`;
+// A message that is in the conversation can be picked (tap it) and then removed.
+const pickable = t => app && t != null ? ` data-t="${t}" tabindex="0"` + (t === picked ? ' class="bubble picked"' : ' class="bubble"') : ' class="bubble"';
+const remover = t => app && t != null && t === picked ? `<button class="remove" data-remove="${t}">Remove from the chat</button>` : "";
+const mine = (text, t, aloud, kept) => `<div class="msg me"><div${pickable(kept ? t : null)}>${esc(text)}</div>
+  <span class="time">${timeOf(t)}${aloud ? ", out loud" : ""}</span>${remover(kept ? t : null)}</div>`;
 
 // Signed in: the whole conversation, spoken and typed, with each job where it was started.
 // Otherwise (results made public): the jobs alone.
@@ -412,8 +421,8 @@ function drawActivity() {
     const d = dayOf(e.t);
     if (d !== day) { html += `<p class="day">${d}</p>`; day = d; }
     if (e.job) html += byId[e.job] ? jobReply(byId[e.job], e.onIt) : "";
-    else if (e.who === "you") html += mine(e.text, e.t, e.via === "voice");
-    else html += `<div class="msg muse"><div class="bubble">${esc(e.text)}</div></div>`;
+    else if (e.who === "you") html += mine(e.text, e.t, e.via === "voice", e.via != null);
+    else html += `<div class="msg muse"><div${pickable(e.t)}>${esc(e.text)}</div>${remover(e.t)}</div>`;
   }
   if (pending) html += mine(pending, Date.now() / 1000) +
     `<div class="msg muse"><div class="bubble dots" role="status" aria-label="Muse is typing"><i></i><i></i><i></i></div></div>`;
@@ -492,7 +501,7 @@ async function draw() {
   else if (tab === "memory") { key = "memory" + JSON.stringify(app && [app.memory, app.reminders]) + notice; html = drawMemory(); }
   else {
     const last = messages[messages.length - 1] || {};
-    key = "activity" + canRead + Boolean(app) + pending + messages.length + (last.text || "").length +
+    key = "activity" + canRead + Boolean(app) + pending + picked + messages.length + (last.text || "").length +
           JSON.stringify(jobs.map(j => [j.id, j.status]));
     html = drawActivity();
   }
@@ -509,7 +518,8 @@ async function draw() {
   drawn = key;
   view.innerHTML = html;
   const count = jobs.length + messages.length + (pending ? 1 : 0);
-  if (tab === "activity" && (fresh || count !== lastCount)) window.scrollTo(0, document.documentElement.scrollHeight);
+  if (stay) stay = false;
+  else if (tab === "activity" && (fresh || count !== lastCount)) window.scrollTo(0, document.documentElement.scrollHeight);
   else if (fresh) window.scrollTo(0, 0);
   lastCount = count;
 }
@@ -555,7 +565,18 @@ function grow() { task.style.height = "auto"; task.style.height = Math.min(task.
 document.addEventListener("click", async e => {
   if (e.target === shade) return go("activity");
   const b = e.target.closest("button");
-  if (!b) return;
+  const bubble = !b && e.target.closest(".bubble[data-t]");
+  if (bubble && !String(getSelection())) {    // tap a message to pick it; again to let go
+    const t = Number(bubble.dataset.t);
+    picked = picked === t ? null : t; stay = true;
+    return draw();
+  }
+  if (!b) { if (picked != null && !e.target.closest(".bubble")) { picked = null; stay = true; draw(); } return; }
+  if (b.dataset.remove) {
+    await call("/chat", {remove: [Number(b.dataset.remove)]}).catch(() => {});
+    picked = null; stay = true;
+    return refresh();
+  }
   if (b.dataset.go) go(b.dataset.go);
   else if (b.dataset.read) go("read/" + b.dataset.read);
   else if (b.dataset.idea) { go("activity"); task.value = b.dataset.idea; setTimeout(() => { grow(); task.focus(); }, 0); }
@@ -587,7 +608,11 @@ document.addEventListener("submit", async e => {
   }
 });
 
-document.addEventListener("keydown", e => { if (e.key === "Escape" && !shade.hidden) go("activity"); });
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && !shade.hidden) go("activity");
+  else if (e.key === "Escape" && picked != null) { picked = null; stay = true; draw(); }
+  else if (e.key === "Enter" && e.target.matches && e.target.matches(".bubble[data-t]")) e.target.click();
+});
 task.addEventListener("input", grow);
 task.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); ask(task.value); } });
 window.addEventListener("hashchange", () => { notice = ""; draw(); });
