@@ -104,7 +104,9 @@ def reminder_line(text, late=False):
     """What Muse says when a reminder is due."""
     text = " ".join(str(text).split())
     text = text + ("" if text[-1:] in ".!?" else ".")
-    return ("A reminder from earlier: " if late else "Reminder: ") + text
+    if late:
+        return "Hey, a reminder from earlier: " + text
+    return "Hey, reminder time! " + text[:1].upper() + text[1:]
 
 
 def timer_line(label):

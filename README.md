@@ -45,7 +45,7 @@ when Claude needs your OK and cheers when the reply is done.
 | Nothing | Breathes, blinks and glances around; now and then peeks at you up close, looks around, wiggles or stretches |
 | Nothing for 3 minutes | Dozes off: eyes closed, "z z Z", the screen dimmed. Touch it, pick it up or press BOOT to wake it |
 | Ask for something bigger: "research the best budget 3D printers" | Says it's on it, works in the background for a few minutes, then tells you the answer in a sentence; the write-up is on a web page |
-| Set a timer or a reminder, run its battery down, pick it up in the morning | Speaks first: "Time's up! Tea.", "Reminder: call mum.", "I'm getting sleepy, could you plug me in?", and a good morning with what is on today |
+| Set a timer or a reminder, run its battery down, pick it up in the morning | Speaks first: "Time's up! Tea.", "Hey, reminder time! Call mum.", "I'm getting sleepy, could you plug me in?", and a good morning with what is on today |
 
 The AI has Muse's body and screen as tools, so you can just ask: "dance for me", "come closer",
 "show the word hello", "turn the volume down", "good night". It can sense things too: "how's your
@@ -331,7 +331,7 @@ Muse does not only answer. It wakes up, comes close and says something by itself
 | When | Muse |
 | --- | --- |
 | A timer is up | "Time's up! Tea.", with a wave and the label as a sign |
-| A reminder is due | "Reminder: call mum.", with a wave and a sign. At any hour, since you asked for it |
+| A reminder is due | "Hey, reminder time! Call mum.", with a wave and the reminder as a sign for half a minute. At any hour, since you asked for it |
 | A background job is finished | "I'm done!" and the answer in a sentence, with a cheer |
 | Its battery falls to 20 %, and again at 10 % | Asks to be plugged in, with the level as a sign. Not between 10 pm and 8 am |
 | You pick it up, wake it or switch it on for the first time in a morning (5 to 11 am) | Says good morning in its own words, and waves. If there is something to tell, it is a short briefing: today's reminders, any you missed, and research it finished since the last one |

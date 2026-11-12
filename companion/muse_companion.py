@@ -327,7 +327,7 @@ class Hub:
         log("reminder:", line)
         self.talk.say("muse", "voice", line)
         for link in list(self.devices.values()):
-            link.voice.announce(text=line, moves=["wave"], sign="Reminder", secs=20,
+            link.voice.announce(text=line, moves=["wave"], sign=short(reminder["text"], 18), secs=30,
                                 alert=short(reminder["text"], 18), log=False)
         if not self.devices:
             muse_world.missed_reminders(add=reminder["text"])
@@ -341,7 +341,7 @@ class Hub:
             muse_world.missed_reminders(clear=True)
             line = "While I was away, you had %s: %s." % (
                 "a reminder" if len(missed) == 1 else "%d reminders" % len(missed), "; ".join(missed))
-            link.voice.announce(text=line, moves=["wave"], sign="Reminder", secs=20,
+            link.voice.announce(text=line, moves=["wave"], sign=short(missed[0], 18), secs=30,
                                 alert=short(missed[0], 18), log=False)
 
     def on_awake(self, link):
@@ -507,7 +507,7 @@ class DeviceLink:
 
     def close(self):
         self.sender.cancel()
-        self.voice.close()
+        self.voice.close(final=True)
 
 
 # ---------------------------------------------------------------- HTTP

@@ -64,6 +64,7 @@ LEAD_S = 2.5             # how far ahead of playback reply audio is sent to Muse
 CHUNK = 1600             # 50 ms of reply audio per message to Muse
 HISTORY = 8              # recent messages carried over when reconnecting
 SPEAKING_CPS = 14.5      # characters per second at normal pitch (for subtitles)
+SPEAK_TRIES = 3          # times an announcement is tried before a sign is shown instead
 ANNOUNCE_WITHIN_S = 90   # an announcement waits this long for a pause in the conversation
 
 DEFAULTS = {
@@ -478,6 +479,9 @@ class Voice:
         self.line = ""                      # the announcement's words, until they are captioned
         self.note = ""                      # the note handed to the AI for an announcement
         self.refused = False                # Deepgram would not take the announcement just now
+        self.spoke = False                  # the announcement's audio has started
+        self.said_bytes = 0                 # reply audio sent to Muse since the reply began
+        self.announcing = []                # announcements on their way (tasks)
         self.fed = False                    # this Deepgram connection has had microphone audio
         self.line_log = True                # the announcement's words go into the shared conversation
         self.pitch = Pitch(DEFAULTS["pitch"])
@@ -528,11 +532,14 @@ class Voice:
         self.discard = True
         self.link.flush_voice()
 
-    def close(self):
-        for t in self.tasks + [self.connecting]:
+    def close(self, final=False):
+        """Close the Deepgram connection. An announcement on its way survives this
+        (it connects again, or falls back to a sign) unless Muse itself has gone (`final`)."""
+        for t in self.tasks + [self.connecting] + (self.announcing if final else []):
             if t and not t.done():
                 t.cancel()
         self.tasks, self.connecting = [], None
+        self.announcing = [t for t in self.announcing if not t.done()] if not final else []
         if self.dg_writer:
             try:
                 self.dg_writer.write(ws.frame(ws.CLOSE, b"\x03\xe8", masked=True))
@@ -540,7 +547,7 @@ class Voice:
             except Exception:
                 pass
         self.dg_reader = self.dg_writer = None
-        self.ready = False
+        self.ready = self.fed = False
         self.replying = self.unprompted = False
 
     def _close_unfed(self):
@@ -553,22 +560,22 @@ class Voice:
         AI makes of `note` (a note to itself, for a greeting). `moves` and
         `sign` go with it. If Muse cannot speak just now it shows `alert`
         with chirps and a wave instead."""
-        self.tasks = [t for t in self.tasks if not t.done()]
-        self.line_log = log   # whether the words go into the shared conversation
-        self.tasks.append(asyncio.ensure_future(self._announce(text, note, list(moves), sign, secs, alert)))
+        self.announcing = [t for t in self.announcing if not t.done()]
+        self.announcing.append(asyncio.ensure_future(self._announce(text, note, list(moves), sign, secs, alert, log)))
 
-    async def _announce(self, text, note, moves, sign, secs, alert):
+    async def _announce(self, text, note, moves, sign, secs, alert, log_it):
         try:
-            spoken = await self._speak_up(text, note, moves, sign, secs)
+            spoken = await self._speak_up(text, note, moves, sign, secs, log_it)
         except asyncio.CancelledError:
             return
         if not spoken and alert:
+            log("voice: could not say it out loud; showing a sign instead:", alert)
             self.link.send_json({"type": "alert", "text": alert})
 
-    async def _speak_up(self, text, note, moves, sign, secs):
+    async def _speak_up(self, text, note, moves, sign, secs, log_it=True):
         if not options()["speak_first"] or not read_key():
             return False
-        connects = 0
+        connects = tries = 0
         give_up = time.monotonic() + ANNOUNCE_WITHIN_S
         while time.monotonic() < give_up:
             if self.talking or self.replying or self.unprompted:
@@ -578,14 +585,18 @@ class Voice:
                 continue
             if not self.ready:
                 if not self.dg_writer and not self.connecting:
-                    if connects == 2:
+                    if connects == SPEAK_TRIES:
                         return False
                     connects += 1
                     self.connecting = asyncio.ensure_future(self._connect())
                 await asyncio.sleep(0.1)
                 continue
-            self.discard = self.refused = False
+            if tries == SPEAK_TRIES:
+                return False
+            tries += 1
+            self.discard = self.refused = self.spoke = False
             self.unprompted = True
+            self.line_log = log_it   # whether the words go into the shared conversation
             self.cue = ([{"type": "voice", "show": ascii_text(sign, 18), "secs": secs}] if sign else []) + \
                        ([{"type": "voice", "do": moves}] if moves else [])
             self.line, self.note = text, note
@@ -596,15 +607,15 @@ class Voice:
             else:
                 self._send_json({"type": "InjectAgentMessage", "message": text})
             for _ in range(100):                # the first audio comes within a second or two
-                if self.replying or self.refused or self.talking or not self.ready:
+                if self.spoke or self.refused or self.talking or not self.ready:
                     break
                 await asyncio.sleep(0.1)
-            if self.replying:
+            if self.spoke:
                 return True
             self.unprompted, self.cue, self.line = False, [], ""
             if self.talking and note:
                 return True
-            await asyncio.sleep(1.0)            # refused, or the connection dropped: try again
+            await asyncio.sleep(1.0)            # refused, no audio, or the connection dropped: try again
         return False
 
     # ------------------------------------------------------------ Deepgram
@@ -618,7 +629,9 @@ class Voice:
 
     def _fail(self, why):
         log("voice:", why)
-        self.link.send_json({"type": "voice", "state": "error", "error": why[:120]})
+        if self.talking or self.fed or not any(not t.done() for t in self.announcing):
+            # Not for an announcement that nobody asked for: that falls back to a sign.
+            self.link.send_json({"type": "voice", "state": "error", "error": why[:120]})
         self.close()
 
     async def _connect(self):
@@ -697,6 +710,8 @@ class Voice:
     def _start_reply(self):
         if not self.replying:
             self.replying = True
+            self.spoke = True
+            self.said_bytes = 0
             self.pitch.reset()
             self.link.queue_voice("start", None)
             for msg in self.cue:            # the sign and moves of an announcement
@@ -720,6 +735,7 @@ class Voice:
         self._start_reply()               # Deepgram no longer always sends AgentStartedSpeaking
         self.last_activity = time.monotonic()
         data = self.pitch.feed(data)
+        self.said_bytes += len(data)
         for i in range(0, len(data), CHUNK):
             self.link.queue_voice("audio", data[i:i + CHUNK])
 
@@ -767,6 +783,11 @@ class Voice:
                 self.discard = False
                 self._start_reply()
         elif t == "AgentAudioDone":
+            if self.unprompted and not self.spoke:
+                log("voice: Deepgram finished without any audio")
+                self.refused = True         # the announcement is tried again
+            elif self.unprompted:
+                log("voice: said %.1f s to Muse" % (self.said_bytes / BYTES_PER_S))
             self.replying = self.unprompted = False
             if not self.fed and not self.talking:
                 # Opened just to say something. Deepgram drops a connection that

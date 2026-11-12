@@ -5,6 +5,8 @@
 - **Reminders.** "Remind me at 5 pm to call mum", out loud or typed: for today, a later day, or repeating every day, on weekdays or every week (the AI's new `reminder` tool). When one is due Muse wakes, says it, waves and shows a sign, and the line goes into the chat. They are kept in `reminders.json`, so they survive a restart; one that came due while the server was off or Muse was not connected is said when it is back.
 - **A morning briefing.** The first good morning of the day now includes today's reminders, any you missed, and the research Muse finished since the last one.
 - The web app's Memory tab lists your reminders with a button to cancel each (`POST /reminders`).
+- Speaking first is sturdier: an announcement is tried again if Deepgram cannot be reached or sends no audio, and then falls back to chirps and a sign (before, it could be lost without either). The server log says how much was said.
+- The typed chat no longer "corrects" itself about things it did in earlier messages.
 
 ## 0.10.0 (2026-11-12)
 

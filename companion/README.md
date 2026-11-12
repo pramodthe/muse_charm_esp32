@@ -186,13 +186,15 @@ microphone audio.
 | Trigger | From | Says |
 | --- | --- | --- |
 | A timer is up | `Hub.alert()` | `timer_line()`: "Time's up! Tea." |
-| A reminder is due (`Reminders.run()` looks every 10 s) | `Hub.remind()` | `reminder_line()`: "Reminder: call mum." With no Muse connected it is kept in `state.json` and said by `Hub.catch_up()` 8 s after one connects |
+| A reminder is due (`Reminders.run()` looks every 10 s) | `Hub.remind()` | `reminder_line()`: "Hey, reminder time! Call mum." With no Muse connected it is kept in `state.json` and said by `Hub.catch_up()` 8 s after one connects |
 | A background job ends | `Hub.on_job_done()` | "I'm done!" and the job's summary, or that it could not finish |
 | `status` reports a battery at or under 20 %, then 10 %, not charging | `Hub.on_status()` | `battery_line()`; not between 10 pm and 8 am |
 | Muse sends `{"type":"awake"}` (picked up, woken by touch, switched on) | `Hub.on_awake()` | The AI's own good morning, once a day between 5 and 11 am (`state.json` remembers the day). `briefing_note()` adds today's reminders, missed ones and the research finished since the last briefing to the note it is handed |
 
 An announcement waits for a pause if a conversation is under way (a greeting is dropped instead).
-If Muse cannot speak, it gets `{"type":"alert","text":"..."}`: chirps, a wave and the sign.
+If Deepgram cannot be reached or sends no audio, it is tried again (three times in all), and the
+log says how much was said ("said 2.1 s to Muse"). If Muse still cannot speak, it gets
+`{"type":"alert","text":"..."}`: chirps, a wave and the sign.
 
 ## Claude Code events
 

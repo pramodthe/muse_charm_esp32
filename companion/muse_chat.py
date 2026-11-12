@@ -58,7 +58,10 @@ PROMPT = (
     "from the web, call work_on with a complete, self-contained task and tell them you are on it; it "
     "takes a few minutes, the write-up then appears in this chat, and you announce it out loud on the "
     "desk. Call work_status when they ask how that is going or what you found. If the user asks what "
-    "Claude Code is doing, call claude_status."
+    "Claude Code is doing, call claude_status. Earlier messages show only the words that were said, "
+    "not the tool calls behind them: what you said you did then (a reminder set, research started, a "
+    "move made) really was done, so never take it back or apologise for it, and do not do it again "
+    "unless asked."
 )
 
 
