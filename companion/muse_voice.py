@@ -62,7 +62,8 @@ OPTIONS_FILE = os.path.join(CONFIG_DIR, "voice.json")
 SAMPLE_RATE = 16000
 BYTES_PER_S = SAMPLE_RATE * 2
 TAIL_SILENCE_S = 1.2     # after you let go, so Deepgram notices the end of the turn
-KEEPALIVE_S = 7          # Deepgram wants a message at least every 8 s
+KEEPALIVE_S = 5          # Deepgram closes a connection that gets neither audio nor a KeepAlive for
+                         # about 10 s; other messages (a tool's answer) do not count
 IDLE_CLOSE_S = 120       # close the Deepgram connection after this much quiet
 LEAD_S = 2.5             # how far ahead of playback reply audio is sent to Muse
 CHUNK = 1600             # 50 ms of reply audio per message to Muse
@@ -678,10 +679,11 @@ class Voice:
         return False
 
     # ------------------------------------------------------------ Deepgram
-    def _send(self, op, payload):
+    def _send(self, op, payload, keeps_alive=None):
         if self.dg_writer:
             self.dg_writer.write(ws.frame(op, payload, masked=True))
-            self.last_sent = time.monotonic()
+            if op == ws.BINARY if keeps_alive is None else keeps_alive:
+                self.last_sent = time.monotonic()   # only audio and KeepAlive count for Deepgram
 
     def _send_json(self, obj):
         self._send(ws.TEXT, json.dumps(obj).encode())
@@ -740,7 +742,7 @@ class Voice:
                 self.close()
                 return
             if self.ready and now - self.last_sent > KEEPALIVE_S:
-                self._send_json({"type": "KeepAlive"})
+                self._send(ws.TEXT, b'{"type": "KeepAlive"}', keeps_alive=True)
 
     async def _read_loop(self):
         reader, writer = self.dg_reader, self.dg_writer
