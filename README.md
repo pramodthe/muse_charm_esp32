@@ -103,6 +103,9 @@ Linux or `COM5` on Windows. Flashing replaces whatever firmware is on the board;
 publishes the factory firmware in its repository if you want it back. Every push to `main` is
 also built by GitHub Actions, which keeps the binaries as a downloadable artifact.
 
+With the server online you need the cable only this once: later builds reach Muse
+[over WiFi](#firmware-updates-over-wifi).
+
 ### 2. Put Muse on your WiFi
 
 Setup opens on Muse's screen the first time, and whenever none of its saved networks is in range.
@@ -184,6 +187,31 @@ Any other host that runs containers and passes websockets through over https wor
 [`companion/Dockerfile`](companion/Dockerfile), set `DEEPGRAM_API_KEY` and `MUSE_TOKEN` in the
 host's settings, and save `{"url": "wss://your-host/device", "token": "..."}` in
 `~/.config/muse/server.json` before pairing.
+
+### Firmware updates over WiFi
+
+Once Muse is linked to the online server, new firmware reaches it without the cable:
+
+```bash
+cd firmware && idf.py build && cd ..
+python3 companion/muse_companion.py update
+```
+
+The second command sends `firmware/build/muse_charm.bin` to the online server and follows what
+happens. When Muse has been left alone for 20 seconds it shows "Updating 42%" at the top of its
+screen, downloads the image (a minute or two), and restarts into it. The character's frames are
+part of the image, so a new character or new clips arrive the same way.
+
+| | |
+| --- | --- |
+| Who can update Muse | Only the online server, over TLS and with the token, both to put an image there and to fetch it. A server found on the local network cannot |
+| What is checked | On the way in: that the image is this project's, built for the ESP32-S3, and intact. On Muse: the same, and that it is the image the server offered |
+| If the new firmware is bad | It is on trial until Muse has linked to a server with it. If it crashes before that, or cannot link within ten minutes, Muse goes back to the firmware from before and will not install that image again |
+| While it downloads | Muse does not listen: holding BOOT gets a shake of the head. A failed download is tried again after five minutes, three times |
+
+Firmware from before this (0.11.0 and earlier) has one app slot, so it needs `idf.py flash` over
+the cable once more to get the two-slot layout; WiFi and the server's address are kept. Without
+an online server, updates still go over the cable.
 
 What changes online: your voice travels from Muse to that host and on to Deepgram, and the host
 holds your Deepgram key, so use a host you trust. Anyone with the token can use the server, so
@@ -554,6 +582,7 @@ firmware/              ESP-IDF project
     portal.c/.h        the Muse-setup page for phones
     panel.c/.h         keeps the AMOLED panel's settings, brightness
     power.c/.h         battery level and charging (AXP2101)
+    update.c/.h        firmware updates over WiFi, with a way back
     settings.c/.h      NVS start-up
     Kconfig.projbuild  menuconfig options
 companion/             runs on your computer
@@ -564,6 +593,7 @@ companion/             runs on your computer
   muse_worker.py       one job: a Deep Agent that researches and writes up
   muse_results.py      the web app: the chat, ideas, memory, Muse's status
   muse_chat.py         the shared conversation, and answers to typed messages
+  muse_firmware.py     the firmware image the online server keeps for Muse
   muse_ws.py           small websocket implementation
   muse_env.py          reads your keys from .env
   install_hooks.py     adds or removes the Claude Code hooks

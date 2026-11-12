@@ -31,6 +31,7 @@ Claude Code ──hooks (curl)──> muse_companion.py <──websocket──> 
 | `muse_worker.py` | One job, in its own process: a Deep Agent that searches the web and writes up what it finds |
 | `muse_results.py` | The web app at `/results`: the chat, ideas, memory, Muse's status |
 | `muse_chat.py` | The conversation shared by voice and web app, and the answers to typed messages (Anthropic API) |
+| `muse_firmware.py` | The firmware image the online server keeps for Muse (updates over WiFi) |
 | `muse_ws.py` | A small websocket implementation (server and client) |
 | `muse_env.py` | Reads your keys from the repository's `.env` file |
 | `install_hooks.py` | Adds or removes the Claude Code hooks |
@@ -108,6 +109,25 @@ online mode (the `MUSE_TOKEN` environment variable is set):
   again. Modal keeps the old version running for as long as Muse stays connected to it, so the
   script first asks the old one (`POST /retire`) to let Muse go and turn it away for five minutes;
   Muse reconnects by itself and lands on the new version.
+
+### Firmware updates
+
+`python3 companion/muse_companion.py update [file]` sends a firmware build (by default
+`firmware/build/muse_charm.bin`) to the online server and waits while Muse installs it;
+`--no-wait` only sends it. On the server, in online mode and always with the token:
+
+| | |
+| --- | --- |
+| `POST /firmware` | The image as the body. `muse_firmware.describe()` refuses anything that is not this project's intact ESP32-S3 app image. It is kept as `firmware.bin` in the data folder |
+| `GET /firmware.bin` | The image, for Muse |
+| `GET /firmware.json` | `{"server": {"id", "version", "size", "built"}, "muse": {"id", "version", "update": {"state", "percent"}}}` |
+
+An image's `id` is the SHA-256 that ESP-IDF appends to it. Muse sends the id of the image it is
+running in its `hello` (`"fw"`, with `"ver"`); if the server's is another one, the server sends
+`{"type":"firmware","id":...,"size":...}`, on connecting and when a new image is uploaded. Muse
+reports back with `{"type":"update","state":...}`: `downloading` (with `percent`), `restarting`,
+`kept` (the new image linked, so it stays), `failed` or `refused` (this image was dropped after
+a trial before). The firmware's side is `firmware/main/update.c`.
 
 ## Voice options
 

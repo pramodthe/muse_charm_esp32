@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.12.0 (2026-11-12)
+
+- **Firmware updates over WiFi.** `python3 companion/muse_companion.py update` sends a build to the online server; Muse downloads it when it has been left alone for 20 seconds, shows "Updating 42%", and restarts into it. Only the online server can do this, over TLS and with the token.
+- A new image is on trial until Muse has linked to a server with it; if it crashes first or cannot link within ten minutes, Muse goes back to the firmware from before and refuses that image from then on.
+- The flash has two app slots for this (`partitions.csv`), so firmware from before needs one more `idf.py flash` over the cable. WiFi and the server's address are kept.
+- The web app can take entries out of the conversation (`POST /chat {"remove": [...]}`).
+
 ## 0.11.0 (2026-11-12)
 
 - **Reminders.** "Remind me at 5 pm to call mum", out loud or typed: for today, a later day, or repeating every day, on weekdays or every week (the AI's new `reminder` tool). When one is due Muse wakes, says it, waves and shows a sign, and the line goes into the chat. They are kept in `reminders.json`, so they survive a restart; one that came due while the server was off or Muse was not connected is said when it is back.
