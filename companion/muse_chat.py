@@ -119,6 +119,15 @@ class Conversation:
             self.items.pop()
             self._save()
 
+    def remove(self, times):
+        """Take entries out by their time ("t"), as the web app's feed gives it."""
+        times = times if isinstance(times, list) else [times]
+        times = {float(t) for t in times if isinstance(t, (int, float))}
+        before = len(self.items)
+        self.items = [e for e in self.items if e.get("t") not in times]
+        self._save()
+        return {"ok": True, "removed": before - len(self.items)}
+
     def job(self, job_id):
         """Add that Muse started a background job."""
         self.items.append({"t": time.time(), "who": "muse", "job": job_id})

@@ -628,7 +628,9 @@ async def handle(hub, reader, writer):
             except ValueError:
                 respond(writer, "400 Bad Request")
                 return
-            if path == "/chat":
+            if path == "/chat" and body.get("remove") is not None:
+                result = hub.talk.remove(body["remove"])
+            elif path == "/chat":
                 async with hub.typing:
                     result = await muse_chat.reply(hub, body.get("text"))
             elif path == "/ask":

@@ -6,7 +6,8 @@
     GET  /results/<id>.json   one job with its write-up
     GET  /feed.json           the conversation, the jobs and Muse's state in one
     GET  /app.json            Muse's state, timers and memory
-    POST /chat                {"text": "..."} a typed message; Muse answers (muse_chat.py)
+    POST /chat                {"text": "..."} a typed message; Muse answers (muse_chat.py);
+                              {"remove": [t, ...]} takes entries out of the conversation
     POST /ask                 {"task": "..."} starts a background job directly
     POST /memory              {"add": "..."} or {"forget": "..."}
     POST /reminders           {"cancel": "<id>"}

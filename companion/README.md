@@ -159,7 +159,7 @@ The write-ups are read in the web app at `/results` on the server (`muse_compani
 opens it), laid out as a chat. `GET /avatar` serves `companion/avatar.webp` (or `.gif`, `.png`,
 `.jpg`), if you have put a picture there, as Muse's picture in it. The page itself holds no data. It fetches `/results.json` and `/results/<id>.json`
 for the jobs when it is not signed in, and otherwise `/feed.json`: the conversation, the jobs
-and Muse's state, timers and memory in one answer. It posts `{"text": ...}` to `/chat` for a
+and Muse's state, timers and memory in one answer. It posts `{"text": ...}` to `/chat` (`{"remove": [t, ...]}` there takes entries out of the conversation) for a
 typed message, `{"task": ...}` to `/ask` to start a job directly (which calls `Hub.start_job()`,
 the same as the `work_on` tool) and `{"add": ...}` or `{"forget": ...}` to `/memory`, and `{"cancel": "<id>"}` to `/reminders`.
 
