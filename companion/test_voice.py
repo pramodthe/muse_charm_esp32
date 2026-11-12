@@ -46,6 +46,7 @@ async def run(pcm, url, token, out):
     start = time.monotonic()
     reply = bytearray()
     done = asyncio.Event()
+    lookup = {"open": False}   # a lookup is running: the reply after "let me check" is still to come
 
     def stamp():
         return "%5.2f s" % (time.monotonic() - start)
@@ -61,7 +62,12 @@ async def run(pcm, url, token, out):
                 msg = json.loads(data)
                 if msg.get("type") in ("voice", "voice_ready"):
                     print(stamp(), msg)
-                if msg.get("type") == "voice" and msg.get("state") in ("done", "error"):
+                state = msg.get("state") if msg.get("type") == "voice" else None
+                if state == "looking":
+                    lookup["open"] = True
+                elif state == "looked":
+                    lookup["open"] = False
+                elif state == "error" or (state == "done" and not lookup["open"]):
                     done.set()
             elif op == ws.CLOSE:
                 done.set()
@@ -78,9 +84,9 @@ async def run(pcm, url, token, out):
     writer.write(ws.frame(ws.TEXT, b'{"type":"talk_end"}', masked=True))
     print(stamp(), "let go")
     try:
-        await asyncio.wait_for(done.wait(), 25)
+        await asyncio.wait_for(done.wait(), 45)
     except asyncio.TimeoutError:
-        print(stamp(), "no reply within 25 s")
+        print(stamp(), "no reply within 45 s")
     task.cancel()
     writer.close()
     if reply:
